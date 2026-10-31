@@ -33,69 +33,141 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
     Caddy at `.2` and network aliases for the three public names;
   - PrivacyFence's own `deploy/docker/` files (`compose.yaml`, `Caddyfile`,
     `privacyfence.env.example`), explained in `docs/org-mode-docker.md`.
-- **It needs features released in three repositories first** (separate plans; `manual_before`
-  `mb2-upstream-releases`):
-  - **privacyfence `plan/env-automatic-accounts`:**
+- **The upstream versions are fixed** (`manual_before` `mb2-upstream-releases`):
+
+  | Repository | Release | Image tag |
+  |---|---|---|
+  | privacyfence/privacyfence | `v7.0.0b1`, a GitHub **pre-release** | `PRIVACYFENCE_IMAGE_TAG=7.0.0b1` (only this tag; `latest` does not move to a pre-release) |
+  | privacyfence/peek | `v0.18.0` | `PEEK_IMAGE_TAG=0.18.0` |
+  | privacyfence/grist-provisioner | `v0.2.0` | `GRIST_PROVISIONER_IMAGE_TAG=0.2.0` |
+  | privacyfence/grist-core (the fork) | `v1.7.22-pf.2`, published 2026-10-31 | `GRIST_IMAGE_TAG=1.7.22-pf.2` |
+
+  - 7.0.0b1 must include [privacyfence/privacyfence#1051](https://github.com/privacyfence/privacyfence/pull/1051).
+    It makes the single-user person `admin@privacyfence.localhost` instead of `admin@localhost`.
+    Grist's access API refuses an address whose domain has no dot (grist-core
+    `app/common/gutil.ts:26-27` `EMAIL_RE`, used at `UsersManager.ts:841`), so with
+    `admin@localhost` the provisioner could never add the person to the team site.
+  - GitHub's "latest release" API skips pre-releases, and a PrivacyFence pre-release has no release
+    notes of its own (`release.yml`: pre-release tags fold into the version they lead to). So nothing
+    in this plan looks versions up through "latest release". The phases use these tags, and check
+    PrivacyFence through the tag's own `CHANGELOG.md` and source.
+- **What those releases provide:**
+  - **PrivacyFence 7.0.0b1.**
     - `PRIVACYFENCE_PEEK_AUTO_PROVISION=true` and `PRIVACYFENCE_GRIST_AUTO_PROVISION=true` offer the
-      services and turn automatic accounts on.
-    - In single-user mode they provision `admin@localhost`, only against `localhost` addresses, at
-      start and at each sign-in.
-    - The start-time provisioning can fail when Peek or Grist is not up yet; it is retried at the
-      next sign-in or by the six-hourly sweep (`peek_provisioning.py:227-247`, `:276-291`).
-  - **privacyfence `plan/oidc-provider`:**
+      services and turn automatic accounts on. Any other non-empty value refuses the start.
+    - In single-user mode they provision `admin@privacyfence.localhost`, as verified, only against
+      `localhost` addresses, at start and at each sign-in (setup code or passkey).
+    - Start-time provisioning can fail when Peek or Grist is not up yet. It is retried at the next
+      sign-in, or by the six-hourly sweep, whose first run is at start (`peek_provisioning.py:250-291`).
     - `PRIVACYFENCE_OIDC_CLIENTS`, plus `PRIVACYFENCE_OIDC_CLIENT_<NAME>_REDIRECT_URIS` and
       `…_SECRET_FILE`, make PrivacyFence an OIDC provider at `<issuer>/oidc`.
-    - PKCE S256 is mandatory. There is no consent page and no `end_session_endpoint`.
+      - The `client_id` is the lower-cased name.
+      - A client secret must be at least 32 characters.
+      - Redirect URIs match exactly; `http://localhost:<port>` is accepted.
+    - The provider:
+      - requires PKCE S256;
+      - has no consent page and no `end_session_endpoint`;
+      - signs with RS256;
+      - accepts `client_secret_basic` or `client_secret_post`.
+
+      ID tokens and userinfo carry `sub`, `email`, `email_verified` and `name`.
+    - `email_verified` is true for the single-user person and for built-in Google. With your own IdP
+      it is true only if the IdP sends it, or with `PRIVACYFENCE_IDP_TRUST_UNVERIFIED_EMAIL=true`.
     - The single-user issuer is `http://localhost:8765/oidc` (`org_mode.py:378-379`).
-  - **peek `plan/env-bootstrap`:**
+    - Every `*_FILE` secret (provisioning keys, OIDC client secrets, the IdP client secret) is read
+      **once at start**; a new value needs a restart.
+    - `PRIVACYFENCE_ALLOWED_DOMAINS` only fills Admin → Sign-in at the first start, and only with
+      `PRIVACYFENCE_IDP=builtin-google`. With your own IdP, the IdP decides who can sign in.
+  - **Peek 0.18.0.**
     - Sign-in from the environment, locked on the Admin page: `PEEK_OIDC_ISSUER_URL`,
-      `PEEK_OIDC_CLIENT_ID`, `PEEK_OIDC_CLIENT_SECRET_FILE`, `PEEK_OIDC_SIGNUP` and
-      `PEEK_ALLOWED_EMAIL_DOMAIN`.
-    - `PEEK_PROVISIONING_KEY_FILE`, with rotation in place.
-    - `PEEK_ADMIN_EMAILS`. A provisioned account that is promoted to admin loses its provisioned
-      token, and later provisioning answers 409.
+      `PEEK_OIDC_CLIENT_ID`, `PEEK_OIDC_CLIENT_SECRET_FILE`, `PEEK_OIDC_SIGNUP` (needs an allowed
+      domain) and `PEEK_ALLOWED_EMAIL_DOMAIN` (empty allows any address).
+    - `PEEK_PROVISIONING_KEY_FILE`, with rotation in place. The key must start with `peekprov_` and
+      be at least 40 characters (`internal/peekd/run.go:341`).
+    - `PEEK_ADMIN_EMAILS`. Peek refuses to provision an admin's address (409). A provisioned account
+      that later becomes admin keeps its token, but the token is refused with 403.
     - `/setup` is skipped when admin emails are set, or when sign-in comes from the environment
       together with a sign-up or a provisioning key file.
-    - The existing `PEEK_OIDC_ALLOW_PRIVATE_ISSUER` (`internal/peekd/run.go:129`) lets Peek use an
-      issuer at a private address or `http://localhost` (`internal/server/oauth_config.go:148-185`).
-      Its OIDC routes are `/oauth/oidc/start` and `/oauth/oidc/callback`.
-  - **grist-provisioner (single-session change):**
+      - The line `Peek first-run setup is skipped: <reason>.` goes to stdout, and only while Peek's
+        database has no accounts (`bootstrap.go:104-112`).
+    - `PEEK_OIDC_ALLOW_PRIVATE_ISSUER` (`internal/peekd/run.go:165`) allows an `http://` issuer and
+      one at a private address (`internal/server/oauth_config.go:157-168`).
+    - Peek's OIDC sign-in:
+      - routes are `/oauth/oidc/start` and `/oauth/oidc/callback`;
+      - it uses PKCE S256 and a nonce, and requires `email_verified`;
+      - it adopts an existing account by email at the first sign-in, whatever the sign-up setting;
+      - sign-out is local.
+    - `PEEK_TRUSTED_PROXY_CIDRS` defaults to loopback, so the proxy's address must be set.
+  - **grist-provisioner 0.2.0.**
     - `PROVISIONER_KEY_FILE`.
-    - `PROVISIONER_GRIST_URL`, `PROVISIONER_GRIST_TEAM_SITE` and `PROVISIONER_GRIST_BOOT_KEY_FILE`
-      create the Grist user through Grist's API at a person's first provisioning, and add them to the
-      team site. The team requires `PROVISIONER_ALLOWED_DOMAINS`.
-    - `check` prints `ok: N Grist users, M linked` (`cli.py:59-72`), plus a `team site:` line.
+    - `PROVISIONER_GRIST_URL`, `PROVISIONER_GRIST_TEAM_SITE` and `PROVISIONER_GRIST_BOOT_KEY_FILE`:
+      - must be set together;
+      - add a person to the team site through `PATCH /api/orgs/{site}/access` with `x-boot-key`,
+        which creates the Grist user;
+      - require `PROVISIONER_ALLOWED_DOMAINS`.
+    - It refuses `GRIST_ADMIN_EMAIL` (and `GRIST_DEFAULT_EMAIL`, `GRIST_SUPPORT_EMAIL`) with 409.
+    - It writes Grist's `/persist/home.sqlite3` (`GRIST_HOME_DB`) and its own `/data/provisioner.sqlite3`.
+    - The image entry point is `grist-provisioner` (command `serve`), on port 8485, with `/healthz`
+      and `python` on `PATH`.
+    - `grist-provisioner check` prints `ok: N Grist users, M linked`, then `team site: <site>`.
+    - Routes: `/api/provisioning/self` and `/api/provisioning/accounts/{id}[/key]`. There is no path
+      prefix.
 - **Facts the design rests on:**
   - **PrivacyFence.**
     - Addresses: `http://` only for `localhost`, `127.0.0.1` and `::1` (`grist_auth.py:72-97`,
       `peek_client.py:63-84`). The variables are at `oauth_apps.py:56-58`.
-    - The Host allowlist is the bind host, `127.0.0.1`, `::1` and the issuer's host
-      (`web/server.py:1682-1686`).
-    - The single-user setup code appears in the log as `Setup code: XXXX-XXXX`
-      (`web/single_user_auth.py:275`). `GET /login` sets the `pf_setup_binding` cookie and hidden
-      `binding` and `next` fields. `POST /login/setup` answers 303 with `pf_org_session`
-      (`single_user_auth.py:361-394`). `check_origin` accepts a missing `Origin`
-      (`web/org_session.py:184-202`).
+    - The Host allowlist is `127.0.0.1`, `::1` and the issuer's host (`web/server.py:1691-1695`; the
+      image binds `0.0.0.0`, which is left out). A request with any other Host, such as
+      `privacyfence:8765`, gets 400. So the proxies pass the original `Host`, and nothing calls
+      PrivacyFence by its service name.
+    - The single-user setup code appears in the log as `Setup code: XXXX-XXXX. Open …`
+      (`web/single_user_auth.py:276`).
+      - `GET /login` sets the `pf_setup_binding` cookie (`Path=/login`) and hidden `binding` and
+        `next` fields.
+      - `POST /login/setup` answers 303 to `/security?next=…` with `pf_org_session`
+        (`single_user_auth.py:361-396`).
+      - `check_origin` accepts a missing `Origin` (`web/org_session.py:205-207`).
+      - Over `http://` the cookies have no `Secure` and no `Domain`.
+      - `/oidc/authorize` needs only a live session; no passkey is required.
+      - Five wrong codes use the code up, and a restart with no passkey prints a new one.
     - The image runs as uid 10001, read-only, with data in `/var/lib/privacyfence-org/.privacyfence`.
-  - **Peek.** The image is `FROM scratch` with uid and gid 65532 and no shell; it serves `/healthz`.
+      Its HEALTHCHECK probes `127.0.0.1`. Single-user credentials live in
+      `users/single-user/credentials/{peek,grist}_token.json` under that directory.
+    - A volume that once ran with an identity provider refuses a single-user start. Each
+      configuration's Compose project name keeps its volumes apart.
+  - **Peek.** The image is `FROM scratch` with uid and gid 65532 and no shell. It serves `/healthz`
+    on 7700, and its exec-form HEALTHCHECK needs no shell. Data is in `/data`; large uploads spill
+    to `/tmp`, so the tmpfs is needed.
   - **Grist.**
-    - The image starts as root, chowns `/persist` and drops to `grist` (uid 1001, inferred; CI checks
-      it).
-    - It reads secrets only from the environment. Its OIDC discovery runs server-side at start and
-      refuses the start when unreachable. It requires userinfo `email_verified`, and its callback is
-      `/oauth2/callback`.
+    - The image starts as root, chowns `/persist` and drops to `grist` (uid 1001, checked in CI).
+    - It reads secrets only from the environment.
+    - Its OIDC discovery runs server-side at start. With `GRIST_IN_SERVICE=true`, a failure stops
+      the start.
+    - It requires `email_verified === true`.
+    - Its callback is `/oauth2/callback` under `APP_HOME_URL`, and its default protections are PKCE
+      and state.
+    - Without an `end_session_endpoint` it needs `GRIST_OIDC_IDP_SKIP_END_SESSION_ENDPOINT=true`.
+    - `GRIST_SINGLE_ORG=team` creates the `team` site at start, owned by `GRIST_ADMIN_EMAIL`.
     - New users do not join the team site by themselves.
+    - Its access API refuses an email whose domain has no dot.
     - Grist lists OIDC as a full-edition feature, and upstream's `gristlabs/grist` image can switch
       itself to the paid edition. The suite therefore uses PrivacyFence's fork instead (next bullet).
-- **The Grist image comes from PrivacyFence's fork** (`privacyfence/grist-core`, plan
-  `plan/operational-fork`, `pf/docs/operational-fork-plan.md`).
+- **The Grist image comes from PrivacyFence's fork** (`privacyfence/grist-core`, `pf/README.md`).
   - The fork builds upstream's unchanged `Dockerfile` with no full-edition extensions, channel `core`
     and an empty `GRIST_EXT_FULL_EDITION_BASE_URL`, so the full-edition switch is off. It publishes
     `ghcr.io/privacyfence/grist-core:X.Y.Z-pf.N` for amd64 and arm64, with build provenance.
-  - Every fork build runs a lock-out check: OIDC sign-in, API keys, the boot key and the team-site
-    access API. A Grist release that gates any of them is not released by the fork.
-  - The first release is `1.7.22-pf.1`, based on upstream `v1.7.22`. Because the Dockerfile is
-    unchanged, the entrypoint, command, working directory and `grist` uid are upstream's.
+  - Every fork build runs a lock-out check:
+    - OIDC sign-in;
+    - API keys;
+    - the boot key;
+    - the team-site access API;
+    - the free plan's limits.
+
+    A Grist release that gates any of them is not released by the fork.
+  - The current release is `1.7.22-pf.2`, built from upstream `v1.7.22`.
+  - The upstream Dockerfile has `WORKDIR /grist`, `ENTRYPOINT ["./sandbox/docker_entrypoint.sh"]`
+    and `CMD ["./sandbox/run.sh"]`. The final stage is `node:22-trixie-slim`, which has `/bin/sh`
+    and Node 22's global `fetch`. The `grist-image` CI job confirms these against the pinned tag.
 
 ## Design
 
@@ -154,9 +226,18 @@ __pycache__/
 | `grist-provisioner` | `ghcr.io/privacyfence/grist-provisioner:${GRIST_PROVISIONER_IMAGE_TAG:?pin a version in .env}` | `172.30.87.13` | 8485 |
 | `caddy` / `nginx` | `caddy:${CADDY_IMAGE_TAG:?pin a version in .env}` / `nginx:${NGINX_IMAGE_TAG:?pin a version in .env}` | `172.30.87.2` | 80, 443 |
 
-- **Images.** `.env.example` pins exact versions, never `latest`. The request's
-  `ghcr.io/andras-tkcs/peek` is replaced by `ghcr.io/privacyfence/peek`, where Peek's release workflow
-  publishes. `GRIST_IMAGE_TAG` is the fork's latest release (`1.7.22-pf.1` or newer).
+- **Images.** `.env.example` pins a version for every image, never `latest`:
+  - `PRIVACYFENCE_IMAGE_TAG=7.0.0b1`
+  - `PEEK_IMAGE_TAG=0.18.0`
+  - `GRIST_IMAGE_TAG=1.7.22-pf.2`
+  - `GRIST_PROVISIONER_IMAGE_TAG=0.2.0`
+  - `ALPINE_IMAGE_TAG=3.22` (a minor series, which is enough for a busybox script)
+  - `CADDY_IMAGE_TAG=2.10.2`
+  - `NGINX_IMAGE_TAG=1.28.0`
+
+  The request's `ghcr.io/andras-tkcs/peek` is replaced by `ghcr.io/privacyfence/peek`, where Peek's
+  release workflow publishes. The suite moves to a newer release only through a PR that changes these
+  tags, so CI runs against it.
 - **Compose form.** Every `environment:` block is written in mapping form (`KEY: value`), never as a
   list.
 - **Hardening.**
@@ -191,7 +272,9 @@ __pycache__/
 
 ### Secrets: generated once, one volume per consumer
 
-`init` runs `init.sh` as root on every `docker compose up`. It mounts `./init.sh:/init.sh:ro` and
+`init` runs `init.sh` as root on every `docker compose up`, through `command: ["/bin/sh", "/init.sh"]`
+with no `entrypoint:`, so `docker compose run --rm --no-deps init <cmd>` runs another command
+(`docs/operations.md` uses that). It mounts `./init.sh:/init.sh:ro` and
 four volumes, read-write:
 
 - `pf-secrets:/out/pf`
@@ -224,9 +307,11 @@ not use.
 | `grist_boot_key` | none | grist: `0:0`, provisioner: `1001:1001` |
 | `grist_session_secret` | none | grist: `0:0` |
 
-- **Grist's files are root-owned.** Only Grist's root entrypoint reads them before it drops to uid
-  1001, so the Grist process itself, and a formula sandbox that falls back to unsandboxed, cannot
-  read them.
+- **Grist's files are root-owned**, because only Grist's root wrapper reads them, before the image
+  entrypoint drops to uid 1001. The values do reach the Grist process, because the wrapper exports
+  them into its environment, which is how Grist reads them anyway. Root ownership only keeps them
+  out of reach of something running as uid 1001 that does not inherit that environment. It is not a
+  stronger boundary than upstream's own environment variables.
 - **The operator's secret** (`caddy-idp` only). If `/user-secrets/idp_client_secret` exists, it is
   installed on every run as `/out/pf/idp_client_secret`, owned `10001:10001`, mode `0400`, so a
   rotation takes effect at the next `up`. The operator writes that file on the host with
@@ -234,6 +319,11 @@ not use.
   Docker or userns-remap, `init`'s root may not read a `0600` host file; the README says to make it
   readable to the Docker user in that case.
 - **Never in config files.** No secret is ever in `.env` or `compose.yaml`.
+- **Formats the apps check:**
+  - Peek's key must start with `peekprov_` and be at least 40 characters; it is 52.
+  - PrivacyFence's OIDC client secrets must be at least 32 characters; they are 43.
+- **Read at start.** PrivacyFence and Grist read these values once at start. A new value takes
+  effect only when the container is recreated (`docs/operations.md`).
 - **Uids.** The uids are fixed: 10001 (PrivacyFence image), 65532 (Peek image), 1001 (Grist's `grist`
   user, checked in CI). There is no knob to change them.
 
@@ -259,15 +349,14 @@ entrypoint:
     export GRIST_BOOT_KEY="$$(cat /run/suite/grist_boot_key)"
     export GRIST_OIDC_IDP_CLIENT_SECRET="$$(cat /run/suite/grist_oidc_client_secret)"
     node -e "const u=process.env.GRIST_OIDC_IDP_ISSUER+'/.well-known/openid-configuration';let n=0;const t=()=>fetch(u).then(r=>{if(!r.ok)throw 0;process.exit(0)}).catch(()=>{if(++n>=60){console.error('grist: PrivacyFence is not reachable at '+u);process.exit(1)}setTimeout(t,5000)});t()"
-    exec <ENTRYPOINT> "$$@"
+    exec ./sandbox/docker_entrypoint.sh "$$@"
   - grist
-command: <CMD>
+command: ["./sandbox/run.sh"]
 ```
 
-`<ENTRYPOINT>` and `<CMD>` are exactly the image's `Entrypoint` and `Cmd` from
-`docker image inspect ghcr.io/privacyfence/grist-core:<GRIST_IMAGE_TAG>`, and the `grist-image` CI job checks them (below). If
-the image's `Entrypoint` has more than one element (for example `tini` in front), the wrapper keeps
-all of them.
+These are upstream's `ENTRYPOINT ["./sandbox/docker_entrypoint.sh"]` and `CMD ["./sandbox/run.sh"]`,
+relative to `WORKDIR /grist`. The `grist-image` CI job (below) checks that
+`docker image inspect ghcr.io/privacyfence/grist-core:<GRIST_IMAGE_TAG>` still shows exactly these.
 
 ### Sign-in wiring: PrivacyFence as the OIDC provider (all configurations)
 
@@ -327,13 +416,17 @@ Signing out of Peek or Grist ends only that app's session; the PrivacyFence sess
   - That person's automatic Grist key is refused (409, "connect it by hand"); they paste their own key
     on `/connect` if they want PrivacyFence to reach Grist. The README recommends a dedicated admin
     address.
-  - On localhost the Grist admin is `grist-admin@localhost`, which nobody can sign in as. The install
+  - On localhost the Grist admin is `grist-admin@privacyfence.localhost`, which nobody can sign in as. The install
     is administered through the boot key only, and the README says so.
 
 ### Per-app settings shared by the proxy configurations
 
-`ALLOWED_DOMAIN` takes exactly one domain (`.env.example` says so). It feeds PrivacyFence's,
-Peek's and the provisioner's domain settings.
+`ALLOWED_DOMAIN` takes exactly one domain (`.env.example` says so). It feeds Peek's and the
+provisioner's domain settings in every proxy configuration, and PrivacyFence's
+`PRIVACYFENCE_ALLOWED_DOMAINS` in the Google configurations only.
+- That variable only fills Admin → Sign-in at the first start, and only with built-in Google.
+- With `caddy-idp`, the identity provider decides who can sign in to PrivacyFence; the README says
+  so.
 
 **privacyfence** gets these in `environment:`, plus the optional
 `env_file: [{path: privacyfence.env, required: false}]` for extras such as an Entra group claim:
@@ -342,7 +435,6 @@ Peek's and the provisioner's domain settings.
 PRIVACYFENCE_ISSUER_URL: https://${PF_HOSTNAME:?set PF_HOSTNAME in .env}
 PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.2
 PRIVACYFENCE_ADMIN_EMAILS: ${ADMIN_EMAILS:?set ADMIN_EMAILS in .env}
-PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
 PRIVACYFENCE_PEEK_BASE_URL: https://${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}
 PRIVACYFENCE_PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
 PRIVACYFENCE_PEEK_AUTO_PROVISION: "true"
@@ -434,12 +526,23 @@ The privacyfence service adds:
 - `PRIVACYFENCE_IDP_ISSUER: ${IDP_ISSUER:?set IDP_ISSUER in .env}`
 - `PRIVACYFENCE_IDP_CLIENT_ID: ${IDP_CLIENT_ID:?set IDP_CLIENT_ID in .env}`
 - `PRIVACYFENCE_IDP_CLIENT_SECRET_FILE: /run/suite/idp_client_secret`
+- `PRIVACYFENCE_IDP_TRUST_UNVERIFIED_EMAIL: ${IDP_TRUST_UNVERIFIED_EMAIL:-false}`
+
+**`email_verified`.** Peek and Grist refuse a sign-in unless `email_verified` is true, and
+PrivacyFence passes on what the identity provider says. Some providers never send the claim,
+Microsoft Entra ID among them. For those, the operator sets `IDP_TRUST_UNVERIFIED_EMAIL=true`
+in `.env`, and PrivacyFence then treats addresses in the allowed domain as verified.
+`.env.example` has the variable, commented, with that explanation; the README's caddy-idp quick
+start repeats it.
 
 ### `caddy-google` and `nginx-google`: Google Workspace, nothing to register
 
 - **`.env`** is as in `caddy-idp`, without the `IDP_*` variables. There is no secret file, no
   `secrets/` folder and no `./secrets` mount.
-- **privacyfence** adds `PRIVACYFENCE_IDP: builtin-google`.
+- **privacyfence** adds `PRIVACYFENCE_IDP: builtin-google` and
+  `PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}`.
+- **Who can sign in.** Only verified Google Workspace accounts can sign in, admins included;
+  personal Gmail addresses cannot. The container needs outbound HTTPS to `oauth.privacyfence.eu`.
 - **The operator's one step.** They publish the `_privacyfence-relay` DNS TXT records listed by
   `docker compose exec privacyfence privacyfence-app --relay-dns-records`. That is PrivacyFence's
   existing procedure, and the README links to it.
@@ -521,14 +624,15 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    # Grist only: websockets. These stay at server level, next to the three above: an nginx
+    # location that sets any proxy_set_header of its own inherits none from the server block.
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
     location / {
         proxy_pass <UPSTREAM>;
         # PrivacyFence and Peek: MCP streams and server-sent events
         proxy_buffering off;
         proxy_read_timeout 3600s;
-        # Grist only: websockets
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
     }
     # Grist only:
     location /api/provisioning/ {
@@ -541,7 +645,9 @@ server {
 
 The three server blocks are written out in full in the file. Each block gets only the lines its
 comments assign to it: the buffering lines for PrivacyFence and Peek, and the websocket lines and the
-provisioning location for Grist.
+provisioning location for Grist. **No `location` sets a `proxy_set_header`**, so every location,
+the provisioner's included, passes `Host`, `X-Forwarded-For` and `X-Forwarded-Proto`. Check 12 in
+`scripts/check_configs.py` enforces this.
 
 ### `localhost`: one person, no proxy
 
@@ -562,26 +668,26 @@ provisioning location for Grist.
   - `PRIVACYFENCE_GRIST_PROVISIONER_URL: http://localhost:8485`
   - the two key files and both `…_AUTO_PROVISION: "true"`.
 
-  The one person is `admin@localhost`.
+  The one person is `admin@privacyfence.localhost`.
 - **peek.** On top of the sign-in wiring it sets `PEEK_BASE_URL: http://localhost:7700` and
   `PEEK_PROVISIONING_KEY_FILE`.
   - There are no admin emails and no sign-up. `/setup` is skipped because sign-in and the key file
     come from the environment.
-  - PrivacyFence's provisioned account for `admin@localhost` is adopted at the first SSO sign-in.
+  - PrivacyFence's provisioned account for `admin@privacyfence.localhost` is adopted at the first SSO sign-in.
   - Nobody is a Peek admin, and nobody can become one; the README says so in one line.
 - **grist.** On top of the sign-in wiring it sets:
   - `APP_HOME_URL: http://localhost:8484`
-  - `GRIST_ADMIN_EMAIL: grist-admin@localhost`
+  - `GRIST_ADMIN_EMAIL: grist-admin@privacyfence.localhost`
   - `GRIST_SINGLE_ORG: team`
   - `GRIST_IN_SERVICE: "true"`
   - `GRIST_ORG_CREATION_ANYONE: "false"`
   - `GRIST_PERSONAL_ORGS: "false"`
   - `GRIST_FORCE_LOGIN: "true"`
 - **grist-provisioner.** It sets:
-  - `GRIST_ADMIN_EMAIL: grist-admin@localhost`
+  - `GRIST_ADMIN_EMAIL: grist-admin@privacyfence.localhost`
   - `PROVISIONER_GRIST_URL: http://localhost:8484`
   - `PROVISIONER_GRIST_TEAM_SITE: team`
-  - `PROVISIONER_ALLOWED_DOMAINS: localhost`
+  - `PROVISIONER_ALLOWED_DOMAINS: privacyfence.localhost`
   - the key and boot-key files.
 - **Exposure.** Everything is published on `127.0.0.1` only. The README repeats PrivacyFence's
   warning that anyone who can run `docker` on the computer controls the install.
@@ -611,7 +717,8 @@ It reads `configs/*/` using the standard library and PyYAML.
 | 9 | with a proxy: `PRIVACYFENCE_TRUSTED_PROXIES` equals the proxy's `ipv4_address` | `PRIVACYFENCE_TRUSTED_PROXIES must equal the proxy address` |
 | 9b | with a proxy: its `aliases` contain the three `${…_HOSTNAME:?` references | `proxy aliases must list the three hostnames` |
 | 10 | every `environment:` is a mapping; no key matching `(?i)(secret\|password\|_key)$` | `<service>.environment must be a mapping` / `<service>.<key> must come from a file` |
-| 11 | no service other than `init` mounts another service's secret volume, and the proxy mounts none | `<service> mounts <volume>` |
+| 11 | the secret volumes belong to `pf-secrets`: `privacyfence`, `peek-secrets`: `peek`, `grist-secrets`: `grist`, `provisioner-secrets`: `grist-provisioner` (a constant in the script); a service other than `init` mounts no secret volume but its own, and the proxy mounts none | `<service> mounts <volume>` |
+| 12 | in `templates/*.template`, no `proxy_set_header` appears inside a `location` block (nginx inheritance) | `proxy_set_header inside a location in <file>:<line>` |
 
 ### CI
 
@@ -626,8 +733,9 @@ every action pinned by full SHA. These jobs block:
   - `docker compose config -q`.
 - **`shellcheck`:** `shellcheck -s sh common/init.sh`.
 - **`grist-image`** (added in p2), for the `GRIST_IMAGE_TAG` in `configs/localhost/.env.example`:
-  - `docker image inspect` gives the `Entrypoint` and `Cmd` arrays, and they must equal the ones
-    written in `configs/localhost/compose.yaml`;
+  - `docker image inspect` gives the `Entrypoint` and `Cmd` arrays, and they must equal
+    `["./sandbox/docker_entrypoint.sh"]` and `["./sandbox/run.sh"]`, the values the wrapper in every
+    `compose.yaml` uses;
   - `WorkingDir` must be `/grist`;
   - `docker run --rm --entrypoint id ghcr.io/privacyfence/grist-core:<tag> -u grist` must print `1001`;
   - the image's `Env` contains `GRIST_EXT_FULL_EDITION_BASE_URL=` (empty), so the full-edition switch
@@ -676,12 +784,16 @@ Steps, in this order:
 6. **The OIDC sign-ins.** `python3 tests/e2e/oidc_signin.py apps` uses the same jar:
    - **Grist:** open `http://localhost:8484/login?next=/` and follow redirects through
      `/oidc/authorize` back to Grist. Then assert that `GET http://localhost:8484/api/profile/user`
-     returns 200 with `email == "admin@localhost"`.
+     returns 200 with `email == "admin@privacyfence.localhost"`.
    - **Peek:** open `http://localhost:7700/oauth/oidc/start` and follow redirects. Assert that the
      final status is 200 and the final URL path is not `/login`. Then `GET /dashboard` answers 200.
-7. `docker compose logs peek` contains `first-run setup is skipped`.
+7. `docker compose logs peek` contains `first-run setup is skipped`. Peek prints that line to
+   stdout only while its database has no accounts, so this check runs against the first start's
+   log and is not repeated after step 9.
 8. **No secret in the logs.** For each file in the four secret volumes, read it with
-   `docker compose run --rm --no-deps -T --entrypoint cat init /out/<volume>/<name>` (never printed).
+   `docker compose run --rm --no-deps -T --entrypoint cat init /out/<volume>/<name>`, into a shell
+   variable that is never echoed. Each value is first registered with `echo "::add-mask::$value"`,
+   so a later mistake cannot print it either.
    Fail with `secret <name> appears in the logs` if `docker compose logs --no-color` contains it.
 9. `docker compose down`, then the same `up` as step 1. Then:
    - the `init` log has no `init: generated` line;
@@ -699,8 +811,10 @@ The steps are in the [step-by-step page](https://claude.ai/artifact/S4o9VWjyncbx
 source is `docs/privacyfence-suite-plan-manual-steps.html`.
 
 - **Before:**
-  - `mb2-upstream-releases`: release PrivacyFence (both plans), Peek, grist-provisioner and the
-    grist-core fork, with public images. The repository and its access, formerly `mb1`, are done.
+  - `mb2-upstream-releases`: Peek 0.18.0, grist-provisioner 0.2.0 and grist-core 1.7.22-pf.2 are
+    released. What is left is to merge [privacyfence/privacyfence#1051](https://github.com/privacyfence/privacyfence/pull/1051),
+    release PrivacyFence 7.0.0b1, and check that all four images pull anonymously. The repository
+    and its access, formerly `mb1`, are done.
 - **After:**
   - `ma1-localhost`: run the localhost stack on your own computer.
   - `ma2-caddy-google`: deploy `caddy-google` on a server.
@@ -723,8 +837,12 @@ source is `docs/privacyfence-suite-plan-manual-steps.html`.
 - **The scripted single-user sign-in depends on the login form.** The script reads the field names
   from the page. If the flow cannot be followed without JavaScript, the worker stops with
   `status=blocked`, and steps 3 and 6 move to `manual_after` `ma1-localhost`.
-- **An upstream release is missing a feature.** p2 checks the release notes. If one is absent, it
-  stops with `status=blocked`.
+- **An upstream release is missing a feature.** p2 checks each pinned tag (below). If one is
+  missing, it stops with `status=blocked`. In particular, if `v7.0.0b1`'s
+  `src/privacyfence/web/single_user_auth.py` still says `admin@localhost`, privacyfence/privacyfence#1051 did not make it
+  into b1, and Grist provisioning on localhost cannot work.
+- **Your own IdP sends no `email_verified`.** Peek and Grist refuse the sign-in. `ma3-caddy-idp`
+  shows it; the fix is `IDP_TRUST_UNVERIFIED_EMAIL=true`, which the README already explains.
 - **Compose versions.** `env_file` with `required: false` needs Compose 2.24, and `--wait-timeout`
   needs 2.20. The README states Docker Engine 24+ and Compose 2.24+.
 
@@ -785,9 +903,9 @@ manual_steps_artifact: https://claude.ai/artifact/S4o9VWjyncbxGMNUREgaq1
 manual_steps_source: docs/privacyfence-suite-plan-manual-steps.html
 manual_before:
   - id: mb2-upstream-releases
-    title: Release PrivacyFence (env-automatic-accounts and oidc-provider), Peek, grist-provisioner and the grist-core fork, with public images
-    why: p2 to p4 pin those versions in .env.example, and e2e-localhost.yml pulls them; without them every container check fails
-    done_when: The latest GitHub release notes of privacyfence/privacyfence mention PRIVACYFENCE_PEEK_AUTO_PROVISION and PRIVACYFENCE_OIDC_CLIENTS; privacyfence/peek's mention PEEK_OIDC_ISSUER_URL, PEEK_OIDC_SIGNUP, PEEK_ADMIN_EMAILS and PEEK_PROVISIONING_KEY_FILE; privacyfence/grist-provisioner's mention PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE; privacyfence/grist-core has a release vX.Y.Z-pf.N; and `docker pull` of each image at that version (tag without a leading v) works without signing in
+    title: Merge privacyfence/privacyfence#1051 and release PrivacyFence 7.0.0b1; check that all four pinned images are public
+    why: p2 to p4 pin privacyfence-org 7.0.0b1, peek 0.18.0, grist-core 1.7.22-pf.2 and grist-provisioner 0.2.0 in .env.example, and e2e-localhost.yml pulls them; without b1 (and #1051 in it) every container check fails, and Grist provisioning of the single-user person fails
+    done_when: The tag v7.0.0b1 exists on privacyfence/privacyfence and its src/privacyfence/web/single_user_auth.py has email="admin@privacyfence.localhost"; and docker pull of ghcr.io/privacyfence/privacyfence-org:7.0.0b1, ghcr.io/privacyfence/peek:0.18.0, ghcr.io/privacyfence/grist-core:1.7.22-pf.2 and ghcr.io/privacyfence/grist-provisioner:0.2.0 each works without signing in
 manual_after:
   - id: ma1-localhost
     title: Run configs/localhost on your own computer and use all three apps
@@ -831,7 +949,7 @@ phases:
          - tests/fixtures/good/: common/init.sh, and configs/a/ with no proxy (the five services, .env.example, init.sh);
          - tests/fixtures/proxy/: the same plus a caddy service with the fixed address and aliases, and a Caddyfile.
 
-         One test per check (test_check_<number>, for example test_check_6b) copies the right tree to tmp_path, breaks one thing, and asserts the exact message and exit code 1. test_good_tree_ok and test_proxy_tree_ok check that both pass.
+         One test per check (test_check_<number>, for example test_check_6b; test_check_12 writes a templates/default.conf.template into the copied proxy tree, with a proxy_set_header inside a location) copies the right tree to tmp_path, breaks one thing, and asserts the exact message and exit code 1. test_good_tree_ok and test_proxy_tree_ok check that both pass.
       5. .github/workflows/ci.yml with the jobs check, compose and shellcheck. The compose job iterates over configs/*/ and is green with none. Pin every action by full commit SHA with a version comment, copying actions/checkout and actions/setup-python from privacyfence/grist-provisioner's .github/workflows/real-grist.yml.
       6. CHANGELOG.md with "# Changelog" and an empty "## [Unreleased]".
       7. Run `python3 -m pytest tests -q`, `python3 scripts/check_configs.py` and `ruff check .`. Push and read the ci.yml run on the branch (it runs by itself); it must be green.
@@ -851,8 +969,13 @@ phases:
       - tests/e2e/oidc_signin.py
     brief: |
       Read docs/privacyfence-suite-plan.md: "Services and addresses", "Secrets", "Grist's secrets from files, and waiting for PrivacyFence", "Sign-in wiring", "Admins", "localhost", "CI" and "Risks".
-      1. Versions. With the GitHub MCP get_latest_release tool, read the latest release of privacyfence/privacyfence, privacyfence/peek, privacyfence/grist-provisioner and privacyfence/grist-core, and check that the release notes mention the variables listed in mb2's done_when. Stop condition: if one is missing, stop with status=blocked naming it. Use those versions, without a leading v, as the image tags; GRIST_IMAGE_TAG is the grist-core fork's, such as 1.7.22-pf.1. Use ALPINE_IMAGE_TAG=3.22.
-      2. Read the Grist image's Entrypoint, Cmd and WorkingDir. The container has no Docker, so first add the grist-image job to ci.yml with a step that prints `docker image inspect` for the tag, push, and read the run. Then write those exact arrays into the wrapper's <ENTRYPOINT> and <CMD>, and make the job compare them as designed. Stop condition: see Risks (Grist image).
+      1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=7.0.0b1, PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.2, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
+         - privacyfence/privacyfence: get_file_contents at ref v7.0.0b1 of CHANGELOG.md contains PRIVACYFENCE_PEEK_AUTO_PROVISION and PRIVACYFENCE_OIDC_CLIENTS, and of src/privacyfence/web/single_user_auth.py contains email="admin@privacyfence.localhost";
+         - privacyfence/peek: get_release_by_tag v0.18.0 exists, and CHANGELOG.md at v0.18.0 contains PEEK_OIDC_ISSUER_URL, PEEK_OIDC_SIGNUP, PEEK_ADMIN_EMAILS and PEEK_PROVISIONING_KEY_FILE;
+         - privacyfence/grist-provisioner: get_release_by_tag v0.2.0's body contains PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE;
+         - privacyfence/grist-core: get_release_by_tag v1.7.22-pf.2 exists.
+         Stop condition: if any check fails, stop with status=blocked naming it.
+      2. Add the grist-image job to ci.yml as designed: it compares the image's Entrypoint with ["./sandbox/docker_entrypoint.sh"], its Cmd with ["./sandbox/run.sh"] and its WorkingDir with /grist, and checks the uid and the empty GRIST_EXT_FULL_EDITION_BASE_URL. The wrapper in compose.yaml uses those values verbatim (Design, "Grist's secrets from files"). Stop condition: see Risks (Grist image).
       3. configs/localhost/compose.yaml: `name: privacyfence-localhost`, with the services as specified:
          - init with network_mode: none and the four secret volumes;
          - privacyfence owning the namespace and publishing the three 127.0.0.1 ports;
@@ -883,7 +1006,7 @@ phases:
       - .github/workflows/ci.yml
     brief: |
       Read docs/privacyfence-suite-plan.md: "Services and addresses", "Secrets", "Grist's secrets from files, and waiting for PrivacyFence", "Sign-in wiring", "Admins", "Per-app settings shared by the proxy configurations", "caddy-idp", "caddy-google and nginx-google" and "Caddyfile".
-      1. Use the image tags from configs/localhost/.env.example so that check 8 passes, and the Grist wrapper from configs/localhost/compose.yaml. Add CADDY_IMAGE_TAG=2.10.2.
+      1. Use the image tags from configs/localhost/.env.example so that check 8 passes, and the Grist wrapper from configs/localhost/compose.yaml. Add CADDY_IMAGE_TAG=2.10.2. PRIVACYFENCE_ALLOWED_DOMAINS goes only into caddy-google's privacyfence service, not caddy-idp's (Design, "Per-app settings").
       2. configs/caddy-idp/compose.yaml (`name: privacyfence-caddy-idp`) and configs/caddy-google/compose.yaml (`name: privacyfence-caddy-google`): the five services plus caddy, with:
          - the fixed addresses, the pf network and the `:?` aliases;
          - the shared per-app settings and the configuration's own settings, verbatim;
@@ -897,6 +1020,7 @@ phases:
 
          For caddy-idp also:
          - list PrivacyFence's three redirect URIs in a comment block;
+         - add `# IDP_TRUST_UNVERIFIED_EMAIL=true` commented out, with the comment from the Design's "email_verified" paragraph;
          - add `secrets/.gitkeep`, and a two-line `secrets/README.md` naming idp_client_secret and the `install -m 0600 /dev/null secrets/idp_client_secret` command.
 
          For caddy-google, add a comment that nothing is registered and that the relay DNS records come from `privacyfence-app --relay-dns-records`.
@@ -934,6 +1058,7 @@ phases:
       - python3 scripts/check_configs.py prints "ok: 4 configurations"
       - grep -n "allow 172.30.87.10" configs/nginx-google/templates/default.conf.template finds the line
       - grep -c "proxy_pass http://172.30.87." configs/nginx-google/templates/default.conf.template prints 4
+      - grep -c "proxy_set_header Upgrade" configs/nginx-google/templates/default.conf.template prints 1, and python3 scripts/check_configs.py passes check 12
       - the ci.yml run on the pushed branch is green
 
   - id: p5-docs-retire
@@ -957,6 +1082,7 @@ phases:
            - each person who signs in to PrivacyFence gets their Peek account and Grist key connected;
            - Grist users are created and added to the team site;
            - signing out of Peek or Grist leaves the PrivacyFence session;
+         - sign-in notes: caddy-google and nginx-google admit only verified Google Workspace accounts (no personal Gmail) and need outbound HTTPS to oauth.privacyfence.eu; with caddy-idp the identity provider decides who signs in, and an IdP that sends no email_verified (for example Entra ID) needs IDP_TRUST_UNVERIFIED_EMAIL=true;
          - a section "Admins", from the Design's "Admins": PEEK_ADMIN_EMAILS and GRIST_ADMIN_EMAIL are dedicated addresses that are not auto-connected, localhost has no Peek admin, and Grist on localhost is administered by the boot key only;
          - that Grist comes from PrivacyFence's grist-core fork (open-source build, full-edition switch off, lock-out check on every release), with a link to the fork's pf/README.md; the rootless-Docker note for secrets/idp_client_secret;
          - links to PrivacyFence's docs/org-mode-docker.md, docs/org-mode-setup-guide.md (built-in Google sign-in, relay DNS records) and docs/oidc-provider.md, to Peek's auth docs, and to grist-provisioner's README.
@@ -965,7 +1091,7 @@ phases:
          - Upgrade: change the tags, then `docker compose pull && docker compose up -d`.
          - Backup: stop, then archive each volume with a `docker run --rm -v <volume>:/v alpine tar` command, then start.
          - Rotating a generated value: remove its canonical copy with `docker compose run --rm --no-deps init rm /out/pf/.<name>`, then `docker compose up -d --force-recreate`.
-         - Rotating the IdP secret: replace secrets/idp_client_secret, then `docker compose up -d` and `docker compose restart privacyfence`.
+         - Rotating the IdP secret: replace secrets/idp_client_secret, then `docker compose up -d` and `docker compose restart privacyfence`. PrivacyFence and Grist read every secret once at start, so a rotation always ends with a restart or recreate.
          - Removing a person: PrivacyFence's `--peek-release` and `--grist-release` through `docker compose exec`.
          - Troubleshooting: the init log lines; where each app logs provisioning; on localhost, a PrivacyFence restart needs `docker compose up -d` to bring the other three back; Grist restarting while waiting for PrivacyFence.
       4. CHANGELOG.md under "## [Unreleased]", "### Added": "- The four configurations: caddy-idp, caddy-google, nginx-google and localhost, with generated provisioning keys and OIDC client secrets, Peek and Grist signing in through PrivacyFence, and connected at sign-in."
