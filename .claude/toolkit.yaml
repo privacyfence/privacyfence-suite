@@ -1,0 +1,42 @@
+project:
+  name: PrivacyFence suite
+docs:
+  must_read:
+    - README.md
+  plan_dir: docs
+  changelog:
+    file: CHANGELOG.md
+    section: "## [Unreleased]"
+git:
+  main_branch: main
+  branch_pattern: "<type>/<kebab-case>"
+  branch_types: [feature, fix, chore, docs]
+  merge_style: merge-commit
+verify:
+  fast:
+    - python3 -m pip install -q -r requirements-dev.txt
+    - python3 -m pytest tests -q
+    - python3 scripts/check_configs.py
+  dod:
+    - python3 -m pip install -q -r requirements-dev.txt
+    - python3 -m pytest tests -q
+    - python3 scripts/check_configs.py
+    - ruff check .
+  dod_manual:
+    - "A change to a configuration's compose.yaml, proxy config or .env.example needs the ci.yml run on the pushed branch to be green (docker compose config, caddy validate, nginx -t, shellcheck)."
+    - "A change that can affect the localhost stack needs the e2e-localhost.yml run on the pushed branch to be green."
+ci:
+  dispatchable:
+    - workflow: ci.yml
+      use_when: "docker compose config for every configuration, caddy validate, nginx -t and shellcheck (the cloud session has no Docker)"
+      notes: "Runs by itself on every push and pull request; read that run."
+    - workflow: e2e-localhost.yml
+      use_when: "The localhost stack started for real: every container healthy and PrivacyFence connected to Peek and Grist"
+      notes: "Runs by itself on every push and pull request; workflow_dispatch works once it is on main."
+stacks:
+  - python
+models:
+  planner: opus
+  orchestrator: sonnet
+  worker: sonnet
+  reviewer: opus
