@@ -1,0 +1,11 @@
+{$PF_HOSTNAME} {
+	reverse_proxy privacyfence:8765
+}
+
+{$PEEK_HOSTNAME} {
+	reverse_proxy peek:7700
+}
+
+{$GRIST_HOSTNAME} {
+	reverse_proxy grist:8484
+}

@@ -1,0 +1,8 @@
+.env
+secrets/*
+configs/*/secrets/*
+!configs/*/secrets/.gitkeep
+!configs/*/secrets/README.md
+configs/*/certs/*.pem
+__pycache__/
+.pytest_cache/
