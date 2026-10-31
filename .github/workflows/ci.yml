@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests -q
+      - run: python3 scripts/check_configs.py
+      - run: ruff check .
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: docker compose config for every configuration
+        run: |
+          set -eu
+          for dir in configs/*/; do
+            [ -d "$dir" ] || continue
+            echo "== $dir"
+            (
+              cd "$dir"
+              cp .env.example .env
+              for pair in \
+                PF_HOSTNAME=pf.example.com \
+                PEEK_HOSTNAME=peek.example.com \
+                GRIST_HOSTNAME=grist.example.com \
+                ADMIN_EMAILS=admin@example.com \
+                ALLOWED_DOMAIN=example.com \
+                GRIST_ADMIN_EMAIL=grist-admin@example.com \
+                IDP_ISSUER=https://idp.example.com \
+                IDP_CLIENT_ID=ci; do
+                key=${pair%%=*}
+                sed -i "s|^${key}=.*|${pair}|" .env
+              done
+              docker compose config -q
+            )
+          done
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck -s sh common/init.sh
