@@ -72,12 +72,14 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
 
       ID tokens and userinfo carry `sub`, `email`, `email_verified` and `name`.
     - `email_verified` is true for the single-user person and for built-in Google. With your own IdP
-      it is true only if the IdP sends it, or with `PRIVACYFENCE_IDP_TRUST_UNVERIFIED_EMAIL=true`.
+      it is true only if the IdP sends it, or with `PRIVACYFENCE_IDP_TRUST_UNVERIFIED_EMAIL=true` for
+      an address in an allowed domain (`org_identity.py:490-500`).
     - The single-user issuer is `http://localhost:8765/oidc` (`org_mode.py:378-379`).
     - Every `*_FILE` secret (provisioning keys, OIDC client secrets, the IdP client secret) is read
       **once at start**; a new value needs a restart.
-    - `PRIVACYFENCE_ALLOWED_DOMAINS` only fills Admin → Sign-in at the first start, and only with
-      `PRIVACYFENCE_IDP=builtin-google`. With your own IdP, the IdP decides who can sign in.
+    - `PRIVACYFENCE_ALLOWED_DOMAINS` seeds Admin → Sign-in at the first start of an organization
+      server (`admin_config.py:331-332`). It is then enforced with any identity provider
+      (`org_identity.py:466-478`). PrivacyFence's own docs say "with builtin-google"; the code wins.
   - **Peek 0.18.0.**
     - Sign-in from the environment, locked on the Admin page: `PEEK_OIDC_ISSUER_URL`,
       `PEEK_OIDC_CLIENT_ID`, `PEEK_OIDC_CLIENT_SECRET_FILE`, `PEEK_OIDC_SIGNUP` (needs an allowed
@@ -89,7 +91,7 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
     - `/setup` is skipped when admin emails are set, or when sign-in comes from the environment
       together with a sign-up or a provisioning key file.
       - The line `Peek first-run setup is skipped: <reason>.` goes to stdout, and only while Peek's
-        database has no accounts (`bootstrap.go:104-112`).
+        database has no accounts (`internal/server/bootstrap.go:104-112`).
     - `PEEK_OIDC_ALLOW_PRIVATE_ISSUER` (`internal/peekd/run.go:165`) allows an `http://` issuer and
       one at a private address (`internal/server/oauth_config.go:157-168`).
     - Peek's OIDC sign-in:
@@ -421,12 +423,12 @@ Signing out of Peek or Grist ends only that app's session; the PrivacyFence sess
 
 ### Per-app settings shared by the proxy configurations
 
-`ALLOWED_DOMAIN` takes exactly one domain (`.env.example` says so). It feeds Peek's and the
-provisioner's domain settings in every proxy configuration, and PrivacyFence's
-`PRIVACYFENCE_ALLOWED_DOMAINS` in the Google configurations only.
-- That variable only fills Admin → Sign-in at the first start, and only with built-in Google.
-- With `caddy-idp`, the identity provider decides who can sign in to PrivacyFence; the README says
-  so.
+`ALLOWED_DOMAIN` takes exactly one domain (`.env.example` says so). It feeds PrivacyFence's,
+Peek's and the provisioner's domain settings in every proxy configuration.
+- PrivacyFence takes it only at its first start, into Admin → Sign-in, and enforces it there with
+  any identity provider.
+- A later change of `ALLOWED_DOMAIN` reaches Peek and the provisioner, but PrivacyFence needs it
+  changed on the Admin page; the README says so.
 
 **privacyfence** gets these in `environment:`, plus the optional
 `env_file: [{path: privacyfence.env, required: false}]` for extras such as an Entra group claim:
@@ -435,6 +437,7 @@ provisioner's domain settings in every proxy configuration, and PrivacyFence's
 PRIVACYFENCE_ISSUER_URL: https://${PF_HOSTNAME:?set PF_HOSTNAME in .env}
 PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.2
 PRIVACYFENCE_ADMIN_EMAILS: ${ADMIN_EMAILS:?set ADMIN_EMAILS in .env}
+PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
 PRIVACYFENCE_PEEK_BASE_URL: https://${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}
 PRIVACYFENCE_PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
 PRIVACYFENCE_PEEK_AUTO_PROVISION: "true"
@@ -531,7 +534,8 @@ The privacyfence service adds:
 **`email_verified`.** Peek and Grist refuse a sign-in unless `email_verified` is true, and
 PrivacyFence passes on what the identity provider says. Some providers never send the claim,
 Microsoft Entra ID among them. For those, the operator sets `IDP_TRUST_UNVERIFIED_EMAIL=true`
-in `.env`, and PrivacyFence then treats addresses in the allowed domain as verified.
+in `.env`, and PrivacyFence then treats addresses in `ALLOWED_DOMAIN` as verified. This works
+only together with the allowed domain, which every proxy configuration sets.
 `.env.example` has the variable, commented, with that explanation; the README's caddy-idp quick
 start repeats it.
 
@@ -539,8 +543,7 @@ start repeats it.
 
 - **`.env`** is as in `caddy-idp`, without the `IDP_*` variables. There is no secret file, no
   `secrets/` folder and no `./secrets` mount.
-- **privacyfence** adds `PRIVACYFENCE_IDP: builtin-google` and
-  `PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}`.
+- **privacyfence** adds `PRIVACYFENCE_IDP: builtin-google`.
 - **Who can sign in.** Only verified Google Workspace accounts can sign in, admins included;
   personal Gmail addresses cannot. The container needs outbound HTTPS to `oauth.privacyfence.eu`.
 - **The operator's one step.** They publish the `_privacyfence-relay` DNS TXT records listed by
@@ -842,7 +845,8 @@ source is `docs/privacyfence-suite-plan-manual-steps.html`.
   `src/privacyfence/web/single_user_auth.py` still says `admin@localhost`, privacyfence/privacyfence#1051 did not make it
   into b1, and Grist provisioning on localhost cannot work.
 - **Your own IdP sends no `email_verified`.** Peek and Grist refuse the sign-in. `ma3-caddy-idp`
-  shows it; the fix is `IDP_TRUST_UNVERIFIED_EMAIL=true`, which the README already explains.
+  shows it; the fix is `IDP_TRUST_UNVERIFIED_EMAIL=true` for addresses in `ALLOWED_DOMAIN`, which the
+  README already explains.
 - **Compose versions.** `env_file` with `required: false` needs Compose 2.24, and `--wait-timeout`
   needs 2.20. The README states Docker Engine 24+ and Compose 2.24+.
 
@@ -949,7 +953,7 @@ phases:
          - tests/fixtures/good/: common/init.sh, and configs/a/ with no proxy (the five services, .env.example, init.sh);
          - tests/fixtures/proxy/: the same plus a caddy service with the fixed address and aliases, and a Caddyfile.
 
-         One test per check (test_check_<number>, for example test_check_6b; test_check_12 writes a templates/default.conf.template into the copied proxy tree, with a proxy_set_header inside a location) copies the right tree to tmp_path, breaks one thing, and asserts the exact message and exit code 1. test_good_tree_ok and test_proxy_tree_ok check that both pass.
+         One test per check (test_check_<number>, for example test_check_6b; test_check_12 writes a templates/default.conf.template into the copied proxy tree, with a proxy_set_header inside a location and no ${…} reference, so checks 5 and 5b stay quiet) copies the right tree to tmp_path, breaks one thing, and asserts the exact message and exit code 1. test_good_tree_ok and test_proxy_tree_ok check that both pass.
       5. .github/workflows/ci.yml with the jobs check, compose and shellcheck. The compose job iterates over configs/*/ and is green with none. Pin every action by full commit SHA with a version comment, copying actions/checkout and actions/setup-python from privacyfence/grist-provisioner's .github/workflows/real-grist.yml.
       6. CHANGELOG.md with "# Changelog" and an empty "## [Unreleased]".
       7. Run `python3 -m pytest tests -q`, `python3 scripts/check_configs.py` and `ruff check .`. Push and read the ci.yml run on the branch (it runs by itself); it must be green.
@@ -972,7 +976,7 @@ phases:
       1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=7.0.0b1, PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.2, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
          - privacyfence/privacyfence: get_file_contents at ref v7.0.0b1 of CHANGELOG.md contains PRIVACYFENCE_PEEK_AUTO_PROVISION and PRIVACYFENCE_OIDC_CLIENTS, and of src/privacyfence/web/single_user_auth.py contains email="admin@privacyfence.localhost";
          - privacyfence/peek: get_release_by_tag v0.18.0 exists, and CHANGELOG.md at v0.18.0 contains PEEK_OIDC_ISSUER_URL, PEEK_OIDC_SIGNUP, PEEK_ADMIN_EMAILS and PEEK_PROVISIONING_KEY_FILE;
-         - privacyfence/grist-provisioner: get_release_by_tag v0.2.0's body contains PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE;
+         - privacyfence/grist-provisioner: get_release_by_tag v0.2.0 exists, and CHANGELOG.md at v0.2.0 contains PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE;
          - privacyfence/grist-core: get_release_by_tag v1.7.22-pf.2 exists.
          Stop condition: if any check fails, stop with status=blocked naming it.
       2. Add the grist-image job to ci.yml as designed: it compares the image's Entrypoint with ["./sandbox/docker_entrypoint.sh"], its Cmd with ["./sandbox/run.sh"] and its WorkingDir with /grist, and checks the uid and the empty GRIST_EXT_FULL_EDITION_BASE_URL. The wrapper in compose.yaml uses those values verbatim (Design, "Grist's secrets from files"). Stop condition: see Risks (Grist image).
@@ -1006,7 +1010,7 @@ phases:
       - .github/workflows/ci.yml
     brief: |
       Read docs/privacyfence-suite-plan.md: "Services and addresses", "Secrets", "Grist's secrets from files, and waiting for PrivacyFence", "Sign-in wiring", "Admins", "Per-app settings shared by the proxy configurations", "caddy-idp", "caddy-google and nginx-google" and "Caddyfile".
-      1. Use the image tags from configs/localhost/.env.example so that check 8 passes, and the Grist wrapper from configs/localhost/compose.yaml. Add CADDY_IMAGE_TAG=2.10.2. PRIVACYFENCE_ALLOWED_DOMAINS goes only into caddy-google's privacyfence service, not caddy-idp's (Design, "Per-app settings").
+      1. Use the image tags from configs/localhost/.env.example so that check 8 passes, and the Grist wrapper from configs/localhost/compose.yaml. Add CADDY_IMAGE_TAG=2.10.2.
       2. configs/caddy-idp/compose.yaml (`name: privacyfence-caddy-idp`) and configs/caddy-google/compose.yaml (`name: privacyfence-caddy-google`): the five services plus caddy, with:
          - the fixed addresses, the pf network and the `:?` aliases;
          - the shared per-app settings and the configuration's own settings, verbatim;
@@ -1058,7 +1062,7 @@ phases:
       - python3 scripts/check_configs.py prints "ok: 4 configurations"
       - grep -n "allow 172.30.87.10" configs/nginx-google/templates/default.conf.template finds the line
       - grep -c "proxy_pass http://172.30.87." configs/nginx-google/templates/default.conf.template prints 4
-      - grep -c "proxy_set_header Upgrade" configs/nginx-google/templates/default.conf.template prints 1, and python3 scripts/check_configs.py passes check 12
+      - grep -c "proxy_set_header Upgrade" configs/nginx-google/templates/default.conf.template prints 1
       - the ci.yml run on the pushed branch is green
 
   - id: p5-docs-retire
@@ -1082,7 +1086,7 @@ phases:
            - each person who signs in to PrivacyFence gets their Peek account and Grist key connected;
            - Grist users are created and added to the team site;
            - signing out of Peek or Grist leaves the PrivacyFence session;
-         - sign-in notes: caddy-google and nginx-google admit only verified Google Workspace accounts (no personal Gmail) and need outbound HTTPS to oauth.privacyfence.eu; with caddy-idp the identity provider decides who signs in, and an IdP that sends no email_verified (for example Entra ID) needs IDP_TRUST_UNVERIFIED_EMAIL=true;
+         - sign-in notes: caddy-google and nginx-google admit only verified Google Workspace accounts (no personal Gmail) and need outbound HTTPS to oauth.privacyfence.eu; ALLOWED_DOMAIN limits who signs in to all three apps, and PrivacyFence takes it only at its first start (later changes go through its Admin page); with caddy-idp, an IdP that sends no email_verified (for example Entra ID) needs IDP_TRUST_UNVERIFIED_EMAIL=true, which trusts addresses in ALLOWED_DOMAIN;
          - a section "Admins", from the Design's "Admins": PEEK_ADMIN_EMAILS and GRIST_ADMIN_EMAIL are dedicated addresses that are not auto-connected, localhost has no Peek admin, and Grist on localhost is administered by the boot key only;
          - that Grist comes from PrivacyFence's grist-core fork (open-source build, full-edition switch off, lock-out check on every release), with a link to the fork's pf/README.md; the rootless-Docker note for secrets/idp_client_secret;
          - links to PrivacyFence's docs/org-mode-docker.md, docs/org-mode-setup-guide.md (built-in Google sign-in, relay DNS records) and docs/oidc-provider.md, to Peek's auth docs, and to grist-provisioner's README.
