@@ -1,14 +1,14 @@
+import importlib.util
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import check_configs
+_spec = importlib.util.spec_from_file_location("check_configs", ROOT / "scripts" / "check_configs.py")
+check_configs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(check_configs)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
