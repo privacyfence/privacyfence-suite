@@ -23,12 +23,13 @@ verify:
     - python3 scripts/check_configs.py
     - ruff check .
   dod_manual:
-    - "A change to a configuration's compose.yaml, proxy config or .env.example needs the ci.yml run on the pushed branch to be green (docker compose config, caddy validate, nginx -t, shellcheck)."
+    - "A change to a configuration's compose.yaml, Caddyfile, nginx example config or .env.example needs the ci.yml run on the pushed branch to be green (docker compose config, caddy validate, nginx -t on the example, shellcheck)."
+    - "A change to release/install.sh, scripts/build_release.sh or release.yml needs the ci.yml run on the pushed branch to be green, including the release job."
     - "A change that can affect the localhost stack needs the e2e-localhost.yml run on the pushed branch to be green."
 ci:
   dispatchable:
     - workflow: ci.yml
-      use_when: "docker compose config for every configuration, caddy validate, nginx -t and shellcheck (the cloud session has no Docker)"
+      use_when: "docker compose config for every configuration, caddy validate, nginx -t on the host example config, shellcheck and the release build (the cloud session has no Docker)"
       notes: "Runs by itself on every push and pull request; read that run."
     - workflow: e2e-localhost.yml
       use_when: "The localhost stack started for real: every container healthy and PrivacyFence connected to Peek and Grist"

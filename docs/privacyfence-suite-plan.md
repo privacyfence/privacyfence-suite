@@ -4,6 +4,25 @@
 > together with the repository's profile (`.claude/toolkit.yaml`, also shown in
 > [Appendix A](#appendix-a-claudetoolkityaml)). The profile reaches `main` with the feature PR.
 
+> **Revision 2 (2026-11-01).** Implementation has passed p1 and is on hold in the middle of p2. This
+> revision changes **only p3 and later**; p1 and p2 are kept exactly as they were. Two decisions by
+> the user drive it:
+>
+> 1. **nginx is not a container.** `nginx-google` assumes nginx already runs on the host and ships
+>    an example site configuration only. The suite has no nginx image, service, template mount or
+>    certificate folder.
+> 2. **One download installs a configuration.** Each release publishes one archive (`.tar.gz` and
+>    `.zip`) per configuration and an `install.sh` that can be piped to `sh`.
+>
+> What changed: [Goal](#goal), [Current state](#current-state), [Repository layout](#repository-layout),
+> [Services and addresses](#services-and-addresses-all-configurations),
+> [Per-app settings](#per-app-settings-shared-by-the-proxy-configurations),
+> [nginx on the host](#nginx-google-nginx-on-the-host-example-configuration-only),
+> [Release and install](#release-and-install-one-download),
+> [scripts/check_configs.py](#scriptscheck_configspy), [CI](#ci), [Manual steps](#manual-steps),
+> [Risks](#risks-and-open-questions), [Appendix A](#appendix-a-claudetoolkityaml) and the
+> [manifest](#implementation-manifest) from p3 on (p4 is rewritten, p5 is new, the old p5 is now p6).
+
 ## Goal
 
 An organization starts PrivacyFence (organization mode), Peek and Grist with one
@@ -14,13 +33,21 @@ connected, and signs in to Peek and Grist **through PrivacyFence**. Nobody has t
 - register Peek or Grist with an identity provider;
 - turn a switch on the Admin page.
 
+Getting a configuration onto a machine is one command, with no `git clone`:
+
+```sh
+curl -fsSL https://github.com/privacyfence/privacyfence-suite/releases/latest/download/install.sh | sh -s -- caddy-google
+```
+
+or one archive download (`privacyfence-suite-<config>.zip` or `.tar.gz`) from the same release.
+
 The repository ships four configurations, each a self-contained folder:
 
 | Folder | Proxy | PrivacyFence signs people in with | Peek and Grist sign in with |
 |---|---|---|---|
-| `configs/caddy-idp` | Caddy (automatic HTTPS) | the organization's own OIDC identity provider (one client registration, for PrivacyFence only) | PrivacyFence |
-| `configs/caddy-google` | Caddy (automatic HTTPS) | PrivacyFence's built-in Google sign-in (nothing to register) | PrivacyFence |
-| `configs/nginx-google` | nginx with the operator's certificate | the same as `caddy-google` | PrivacyFence |
+| `configs/caddy-idp` | Caddy container (automatic HTTPS) | the organization's own OIDC identity provider (one client registration, for PrivacyFence only) | PrivacyFence |
+| `configs/caddy-google` | Caddy container (automatic HTTPS) | PrivacyFence's built-in Google sign-in (nothing to register) | PrivacyFence |
+| `configs/nginx-google` | nginx **already on the host**, with the operator's certificate; the folder ships an example site configuration, no nginx container | the same as `caddy-google` | PrivacyFence |
 | `configs/localhost` | none | single-user mode: setup code, then passkey | PrivacyFence |
 
 PrivacyFence is the OpenID Connect provider for Peek and Grist (the user's decision). Whatever
@@ -28,11 +55,22 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
 
 ## Current state
 
-- **Nothing exists yet.** The repository does not exist. The starting points are:
+- **Implementation status** (`feature/privacyfence-suite`):
+  - **p1-skeleton: merged** into the feature branch. It provides `.gitignore`,
+    `requirements-dev.txt`, `pyproject.toml`, `common/init.sh`, `scripts/check_configs.py` (checks 1
+    to 12, with a `PROXIES = ["caddy", "nginx"]` constant and check 12 reading
+    `templates/*.template`), `tests/test_check_configs.py` with the `good` and `proxy` fixture trees,
+    `ci.yml` (jobs `check`, `compose`, `shellcheck`) and `CHANGELOG.md`.
+  - **p2-localhost: on hold**, one commit on `feature/privacyfence-suite--p2-localhost`
+    (`configs/localhost/`, the `grist-image` job, `e2e-localhost.yml`, `tests/e2e/oidc_signin.py`),
+    not merged. It resumes unchanged; nothing in this revision touches it.
+  - p3 onward: not started.
+- **Starting points** used by p1 and p2:
   - the compose file in the request: PrivacyFence, Peek, Grist and Caddy on `172.30.87.0/24`, with
     Caddy at `.2` and network aliases for the three public names;
   - PrivacyFence's own `deploy/docker/` files (`compose.yaml`, `Caddyfile`,
     `privacyfence.env.example`), explained in `docs/org-mode-docker.md`.
+- **There is no release yet.** The repository has no tags, no release workflow and no installer.
 - **The upstream versions are fixed** (`manual_before` `mb2-upstream-releases`):
 
   | Repository | Release | Image tag |
@@ -192,13 +230,22 @@ configs/<name>/.env.example    every variable the folder uses, image tags pinned
 configs/<name>/init.sh         byte-identical copy of common/init.sh (checked)
 configs/caddy-*/Caddyfile
 configs/caddy-idp/secrets/.gitkeep and README.md
-configs/nginx-google/templates/default.conf.template
-configs/nginx-google/certs/README.md   which two files to put there
+configs/nginx-google/nginx/privacyfence-suite.conf   example site config for the host's nginx (p4)
+configs/nginx-google/nginx/README.md                 how to install it on the host (p4)
+release/install.sh             the installer, with @VERSION@ and @CONFIGS@ stamped at build (p5)
+scripts/build_release.sh       builds dist/: archives, install.sh, SHA256SUMS (p5)
+tests/test_release.py          builds a release and installs from it over file:// (p5)
 docs/configurations.md         every variable, per configuration
-docs/operations.md             upgrade, backup, rotating secrets, removing people, troubleshooting
+docs/operations.md             install, upgrade, backup, rotating secrets, removing people, troubleshooting
+docs/releasing.md              how a maintainer cuts a release (p6)
 .github/workflows/ci.yml       lint (below)
 .github/workflows/e2e-localhost.yml
+.github/workflows/release.yml  on a v* tag: build and publish the release assets (p5)
 ```
+
+There is no `configs/nginx-google/templates/` and no `configs/nginx-google/certs/`: the certificate
+belongs to the host's nginx. p4 adds `dist/` to `.gitignore`; the `configs/*/certs/*.pem` line that
+p1 added stays, harmlessly.
 
 Each folder is self-contained, because the request asks for "a stack" an operator copies and runs,
 and Compose's `extends` across folders would tie every folder to the repository layout. The cost is
@@ -226,7 +273,8 @@ __pycache__/
 | `peek` | `ghcr.io/privacyfence/peek:${PEEK_IMAGE_TAG:?pin a version in .env}` | `172.30.87.11` | 7700 |
 | `grist` | `ghcr.io/privacyfence/grist-core:${GRIST_IMAGE_TAG:?pin a version in .env}` | `172.30.87.12` | 8484 |
 | `grist-provisioner` | `ghcr.io/privacyfence/grist-provisioner:${GRIST_PROVISIONER_IMAGE_TAG:?pin a version in .env}` | `172.30.87.13` | 8485 |
-| `caddy` / `nginx` | `caddy:${CADDY_IMAGE_TAG:?pin a version in .env}` / `nginx:${NGINX_IMAGE_TAG:?pin a version in .env}` | `172.30.87.2` | 80, 443 |
+| `caddy` (Caddy configurations only) | `caddy:${CADDY_IMAGE_TAG:?pin a version in .env}` | `172.30.87.2` | 80, 443 |
+| nginx (`nginx-google`) | **not a container**: the host's own nginx | reaches the stack from the `pf` network's gateway, `172.30.87.1` | 80, 443 on the host |
 
 - **Images.** `.env.example` pins a version for every image, never `latest`:
   - `PRIVACYFENCE_IMAGE_TAG=7.0.0b1`
@@ -234,8 +282,10 @@ __pycache__/
   - `GRIST_IMAGE_TAG=1.7.22-pf.2`
   - `GRIST_PROVISIONER_IMAGE_TAG=0.2.0`
   - `ALPINE_IMAGE_TAG=3.22` (a minor series, which is enough for a busybox script)
-  - `CADDY_IMAGE_TAG=2.10.2`
-  - `NGINX_IMAGE_TAG=1.28.0`
+  - `CADDY_IMAGE_TAG=2.10.2` (Caddy configurations only)
+
+  There is no `NGINX_IMAGE_TAG`. CI alone uses an nginx image, pinned in `ci.yml`, to run `nginx -t`
+  on the example configuration.
 
   The request's `ghcr.io/andras-tkcs/peek` is replaced by `ghcr.io/privacyfence/peek`, where Peek's
   release workflow publishes. The suite moves to a newer release only through a PR that changes these
@@ -250,16 +300,22 @@ __pycache__/
   - Every service except `init` has `restart: unless-stopped`.
 - **Network** (proxy configurations).
   - The network is `pf`, with subnet `172.30.87.0/24`.
-  - The proxy has the aliases `${PF_HOSTNAME:?…}`, `${PEEK_HOSTNAME:?…}` and `${GRIST_HOSTNAME:?…}`,
-    so the containers reach the public `https://` names through the proxy, without hairpin NAT. That
-    covers PrivacyFence calling Peek and the provisioner, and Peek and Grist calling PrivacyFence's
-    `/oidc` endpoints.
+  - **Caddy configurations:** the `caddy` service has the aliases `${PF_HOSTNAME:?…}`,
+    `${PEEK_HOSTNAME:?…}` and `${GRIST_HOSTNAME:?…}`, so the containers reach the public `https://`
+    names through the proxy, without hairpin NAT. That covers PrivacyFence calling Peek and the
+    provisioner, and Peek and Grist calling PrivacyFence's `/oidc` endpoints.
+  - **`nginx-google`:** there is no proxy container to alias. The network pins its gateway
+    (`ipam.config[0].gateway: 172.30.87.1`) and its bridge name
+    (`driver_opts: com.docker.network.bridge.name: pf-suite`), and `privacyfence`, `peek` and `grist`
+    map the three public names to the gateway with `extra_hosts`, so the same calls reach the host's
+    nginx on `172.30.87.1:443`. See [nginx on the host](#nginx-google-nginx-on-the-host-example-configuration-only).
 - **`depends_on`** (no cycle):
   - every service except `init`: `init` with `condition: service_completed_successfully`;
   - `grist` also depends on `privacyfence` with `condition: service_healthy`;
   - `grist-provisioner` also depends on `grist` with `condition: service_healthy`;
-  - the proxy depends **only** on `init`. Grist reaches PrivacyFence through the proxy, so the proxy
-    must not wait for Grist, or start-up deadlocks.
+  - the `caddy` service depends **only** on `init`. Grist reaches PrivacyFence through the proxy, so
+    the proxy must not wait for Grist, or start-up deadlocks. (The host's nginx is outside Compose and
+    runs before and after the stack.)
 - **Health checks.**
   - `grist`: `["CMD", "node", "-e", "fetch('http://localhost:8484/status').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]`,
     interval 10s, retries 60, start period 60s.
@@ -430,12 +486,19 @@ Peek's and the provisioner's domain settings in every proxy configuration.
 - A later change of `ALLOWED_DOMAIN` reaches Peek and the provisioner, but PrivacyFence needs it
   changed on the Admin page; the README says so.
 
+**The proxy's address** as the apps see it, `<PROXY_ADDR>` below:
+
+| Configuration | `<PROXY_ADDR>` | Why |
+|---|---|---|
+| `caddy-idp`, `caddy-google` | `172.30.87.2` | the `caddy` container's fixed address |
+| `nginx-google` | `172.30.87.1` | the host's nginx connects to the containers' fixed addresses over the `pf-suite` bridge, so the containers see the bridge's gateway address |
+
 **privacyfence** gets these in `environment:`, plus the optional
 `env_file: [{path: privacyfence.env, required: false}]` for extras such as an Entra group claim:
 
 ```
 PRIVACYFENCE_ISSUER_URL: https://${PF_HOSTNAME:?set PF_HOSTNAME in .env}
-PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.2
+PRIVACYFENCE_TRUSTED_PROXIES: <PROXY_ADDR>
 PRIVACYFENCE_ADMIN_EMAILS: ${ADMIN_EMAILS:?set ADMIN_EMAILS in .env}
 PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
 PRIVACYFENCE_PEEK_BASE_URL: https://${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}
@@ -453,7 +516,9 @@ PRIVACYFENCE_GRIST_AUTO_PROVISION: "true"
   provisioner shares Grist's hostname.
 - **Only from PrivacyFence.** The proxy sends `/api/provisioning/*` to the provisioner only from
   PrivacyFence's fixed address (`172.30.87.10`) and answers 404 to everyone else. The proxy sees the
-  direct peer, and outside clients arrive from the bridge gateway.
+  direct peer. With Caddy, outside clients arrive from the bridge gateway. With the host's nginx,
+  PrivacyFence's call to `172.30.87.1:443` is delivered locally on the host, so its source stays
+  `172.30.87.10` (no masquerading), and outside clients keep their own addresses.
 - **No clash.** Grist has no `/api/provisioning` route, and no fourth hostname or certificate is
   needed.
 - **Why Peek differs.** Peek's own `/api/provisioning/*` stays public behind its key: it is part of
@@ -465,7 +530,7 @@ PRIVACYFENCE_GRIST_AUTO_PROVISION: "true"
 ```
 PEEK_BASE_URL: https://${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}
 PEEK_TRUSTED_PROXY: "true"
-PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.2/32
+PEEK_TRUSTED_PROXY_CIDRS: <PROXY_ADDR>/32
 PEEK_ADMIN_EMAILS: ${PEEK_ADMIN_EMAILS:-}
 PEEK_ALLOWED_EMAIL_DOMAIN: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
 PEEK_OIDC_SIGNUP: "true"
@@ -541,8 +606,8 @@ start repeats it.
 
 ### `caddy-google` and `nginx-google`: Google Workspace, nothing to register
 
-- **`.env`** is as in `caddy-idp`, without the `IDP_*` variables. There is no secret file, no
-  `secrets/` folder and no `./secrets` mount.
+- **`.env`** is as in `caddy-idp`, without the `IDP_*` variables (and, for `nginx-google`, without
+  `CADDY_IMAGE_TAG`). There is no secret file, no `secrets/` folder and no `./secrets` mount.
 - **privacyfence** adds `PRIVACYFENCE_IDP: builtin-google`.
 - **Who can sign in.** Only verified Google Workspace accounts can sign in, admins included;
   personal Gmail addresses cannot. The container needs outbound HTTPS to `oauth.privacyfence.eu`.
@@ -586,42 +651,109 @@ The caddy service:
 
 Caddy resolves upstreams per request, so it starts before the apps.
 
-### nginx (`nginx-google`)
+### `nginx-google`: nginx on the host, example configuration only
 
-- **The nginx service.**
-  - `environment:` holds `PF_HOSTNAME`, `PEEK_HOSTNAME` and `GRIST_HOSTNAME`, each `${…:?…}`. The
-    image's envsubst replaces only variables that are defined in the container.
-  - Mounts: `./templates:/etc/nginx/templates:ro` and `./certs:/etc/nginx/certs:ro`.
-  - Ports: `80:80` and `443:443`.
-- **Certificate.**
-  - The operator supplies `certs/fullchain.pem` and `certs/privkey.pem`, covering all three names (SAN
-    or wildcard).
-  - Rejected: an ACME companion container. It is a second moving part that Caddy already covers, and
-    an operator who wants nginx usually has a certificate process.
-- **Upstreams use the fixed addresses**, so nginx starts while an app is still down:
-  - `http://172.30.87.10:8765` (PrivacyFence)
-  - `http://172.30.87.11:7700` (Peek)
-  - `http://172.30.87.12:8484` (Grist)
-  - `http://172.30.87.13:8485` (the provisioner)
+The user's decision: the operator already runs nginx on the host. The suite ships **no nginx
+container**, only an example site configuration and instructions. Everything else in the folder is
+`caddy-google` without the `caddy` service.
 
-`default.conf.template`:
+**Rejected:**
+
+- **An nginx container with a mounted certificate** (revision 1). The host already has nginx bound to
+  80 and 443, so a second nginx would clash with it.
+- **Publishing the apps on `127.0.0.1:<port>` for the host's nginx.** The source address the
+  containers see would then depend on Docker's userland proxy setting, which would make the
+  trusted-proxy address unpredictable. Connecting to the fixed container addresses always arrives from the
+  bridge gateway.
+- **An ACME companion.** The host's nginx already has a certificate process.
+
+**compose.yaml** (`name: privacyfence-nginx-google`):
+
+- The services are `init`, `privacyfence`, `peek`, `grist` and `grist-provisioner`, as in
+  `caddy-google`, with the same fixed addresses (`.10` to `.13`). There is **no proxy service**,
+  **no `ports:`** on any service, and no `caddy-data`/`caddy-config` volumes.
+- The network:
+
+  ```yaml
+  networks:
+    pf:
+      driver: bridge
+      driver_opts:
+        com.docker.network.bridge.name: pf-suite
+      ipam:
+        config:
+          - subnet: 172.30.87.0/24
+            gateway: 172.30.87.1
+  ```
+
+  The fixed bridge name lets the operator write one firewall rule for it.
+- `privacyfence`, `peek` and `grist` each get:
+
+  ```yaml
+  extra_hosts:
+    - "${PF_HOSTNAME:?set PF_HOSTNAME in .env}:172.30.87.1"
+    - "${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}:172.30.87.1"
+    - "${GRIST_HOSTNAME:?set GRIST_HOSTNAME in .env}:172.30.87.1"
+  ```
+
+  so PrivacyFence → Peek and provisioner, and Peek/Grist → PrivacyFence `/oidc`, go to the host's
+  nginx over the bridge, with the real certificate and no hairpin NAT. `grist-provisioner` calls only
+  `http://grist:8484` and needs none.
+- `<PROXY_ADDR>` is `172.30.87.1`: `PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.1` and
+  `PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.1/32`.
+- `.env.example` is `caddy-google`'s without `CADDY_IMAGE_TAG`.
+
+**What the host must provide** (the folder's `nginx/README.md` and the main README say so):
+
+- Linux with **rootful Docker** (Engine 24+). The host's nginx connects straight to `172.30.87.x`,
+  which Docker Desktop and rootless Docker do not route. Those users take `caddy-google`.
+- nginx **1.25.1 or later** (for `http2 on;`), listening on all addresses for 80 and 443, so that it
+  also answers on `172.30.87.1`.
+- A certificate covering the three names (SAN or wildcard), from the operator's own process
+  (for example certbot).
+- A firewall that lets the `pf-suite` interface reach the host on TCP 443, for example
+  `ufw allow in on pf-suite to any port 443 proto tcp`. (Docker opens host-to-container traffic itself.)
+
+**`nginx/privacyfence-suite.conf`** goes in the `http` context (`conf.d/` or `sites-enabled/`). It
+uses the literal placeholder names `pf.example.com`, `peek.example.com` and `grist.example.com`,
+the same ones CI uses, and certificate paths under `/etc/ssl/privacyfence-suite/`. `nginx/README.md`
+renders it with one command, run in the folder after `.env` is filled in:
+
+```sh
+. ./.env && sed -e "s/pf\.example\.com/$PF_HOSTNAME/g" \
+  -e "s/peek\.example\.com/$PEEK_HOSTNAME/g" -e "s/grist\.example\.com/$GRIST_HOSTNAME/g" \
+  nginx/privacyfence-suite.conf | sudo tee /etc/nginx/conf.d/privacyfence-suite.conf >/dev/null
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+followed by the certificate paths to edit, the firewall line above, and a note that a certbot
+`http-01` webroot needs its own `location /.well-known/acme-challenge/` in the port-80 block.
+
+The file:
 
 ```
-map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+# PrivacyFence suite (nginx-google): example site configuration for the nginx on this host.
+# Replace pf.example.com, peek.example.com and grist.example.com with PF_HOSTNAME, PEEK_HOSTNAME
+# and GRIST_HOSTNAME from .env, and the certificate paths with yours (see nginx/README.md).
+# Needs nginx 1.25.1+. The upstreams are the stack's fixed addresses on the pf-suite bridge.
+
+map $http_upgrade $pf_suite_connection_upgrade { default upgrade; '' close; }
 
 server {
     listen 80;
-    server_name ${PF_HOSTNAME} ${PEEK_HOSTNAME} ${GRIST_HOSTNAME};
+    listen [::]:80;
+    server_name pf.example.com peek.example.com grist.example.com;
     return 301 https://$host$request_uri;
 }
 
-# One block per hostname: <HOST> is ${PF_HOSTNAME}, ${PEEK_HOSTNAME} or ${GRIST_HOSTNAME}.
+# One block per hostname: <HOST> is pf.example.com, peek.example.com or grist.example.com.
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     http2 on;
     server_name <HOST>;
-    ssl_certificate /etc/nginx/certs/fullchain.pem;
-    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_certificate /etc/ssl/privacyfence-suite/fullchain.pem;
+    ssl_certificate_key /etc/ssl/privacyfence-suite/privkey.pem;
     client_max_body_size 100m;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -630,27 +762,35 @@ server {
     # Grist only: websockets. These stay at server level, next to the three above: an nginx
     # location that sets any proxy_set_header of its own inherits none from the server block.
     proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Connection $pf_suite_connection_upgrade;
     location / {
         proxy_pass <UPSTREAM>;
         # PrivacyFence and Peek: MCP streams and server-sent events
         proxy_buffering off;
         proxy_read_timeout 3600s;
     }
-    # Grist only:
+    # Grist only: the provisioner, for PrivacyFence's container alone; 404 for everyone else.
     location /api/provisioning/ {
-        allow 172.30.87.10;
-        deny all;
+        if ($remote_addr != 172.30.87.10) {
+            return 404;
+        }
         proxy_pass http://172.30.87.13:8485;
     }
 }
 ```
 
-The three server blocks are written out in full in the file. Each block gets only the lines its
-comments assign to it: the buffering lines for PrivacyFence and Peek, and the websocket lines and the
-provisioning location for Grist. **No `location` sets a `proxy_set_header`**, so every location,
-the provisioner's included, passes `Host`, `X-Forwarded-For` and `X-Forwarded-Proto`. Check 12 in
-`scripts/check_configs.py` enforces this.
+- The three server blocks are written out in full. Each block gets only the lines its comments
+  assign to it: the buffering lines for PrivacyFence and Peek, and the websocket lines and the
+  provisioning location for Grist.
+- `<UPSTREAM>` is `http://172.30.87.10:8765` (PrivacyFence), `http://172.30.87.11:7700` (Peek) or
+  `http://172.30.87.12:8484` (Grist). With literal addresses, nginx starts and reloads while the
+  stack is down (it answers 502 until the stack is up).
+- The map variable has a suite-specific name, so it cannot clash with a `$connection_upgrade` map
+  the host already defines.
+- **No `location` sets a `proxy_set_header`**, so every location, the provisioner's included, passes
+  `Host`, `X-Forwarded-For` and `X-Forwarded-Proto` (check 12). The `if` holds only a `return`,
+  which is the safe use of `if` in a location.
+- The 404 matches Caddy's, so `ma4` expects the same answer from both.
 
 ### `localhost`: one person, no proxy
 
@@ -695,14 +835,122 @@ the provisioner's included, passes `Host`, `X-Forwarded-For` and `X-Forwarded-Pr
 - **Exposure.** Everything is published on `127.0.0.1` only. The README repeats PrivacyFence's
   warning that anyone who can run `docker` on the computer controls the install.
 
+### Release and install: one download
+
+**What a release publishes.** A tag `vX.Y.Z` on `main` makes `release.yml` publish a GitHub release
+with these assets. Their names carry **no version**, so `releases/latest/download/<name>` always
+works:
+
+| Asset | Content |
+|---|---|
+| `privacyfence-suite-<config>.tar.gz` and `.zip`, for each of the four configurations | one top folder `privacyfence-<config>/` with the configuration folder's tracked files, plus `README.md`, `LICENSE` and `VERSION` (`X.Y.Z`) |
+| `install.sh` | the installer, with the version and the configuration list stamped in |
+| `SHA256SUMS` | `sha256sum` lines for every other asset |
+
+**Two ways to install**, both documented in the README quick start:
+
+```sh
+# 1. Pipe the installer (the newest release, or pin one with releases/download/vX.Y.Z/install.sh):
+curl -fsSL https://github.com/privacyfence/privacyfence-suite/releases/latest/download/install.sh | sh -s -- caddy-google
+# localhost can start right away:
+curl -fsSL https://github.com/privacyfence/privacyfence-suite/releases/latest/download/install.sh | sh -s -- localhost --start
+
+# 2. Or download one archive and unpack it yourself:
+curl -fsSLO https://github.com/privacyfence/privacyfence-suite/releases/latest/download/privacyfence-suite-caddy-google.zip
+unzip privacyfence-suite-caddy-google.zip && cd privacyfence-caddy-google && cp .env.example .env
+```
+
+**`release/install.sh`** is POSIX `sh` (dash and busybox ash), checked by shellcheck.
+
+- **Whole-file guard.** All code is in functions, and the last line is `main "$@"`, so a download cut
+  short runs nothing.
+- **Stamped values.** `@VERSION@` (`X.Y.Z`) and `@CONFIGS@` (`caddy-google caddy-idp localhost
+  nginx-google`) are replaced by `build_release.sh`. The script therefore installs the release it
+  came from and never asks the "latest release" API.
+- **Usage:** `install.sh <config> [--dir DIR] [--upgrade] [--start]`, or `-h`.
+  - `<config>` must be one of `@CONFIGS@`. Missing or unknown: it prints
+    `usage: … <config>` and the list, and exits 2.
+  - `--dir` defaults to `./privacyfence-<config>`.
+- **Source.** `${PRIVACYFENCE_SUITE_BASE_URL:-https://github.com/privacyfence/privacyfence-suite/releases/download/v@VERSION@}`.
+  The override serves mirrors and the tests (`file://`).
+- **Steps:**
+  1. Check for `curl` (or `wget`), `tar` and `sha256sum` (or `shasum -a 256`). If one is missing,
+     print `install: missing <tool>` and exit 1. Without `docker`, warn only (unless `--start`).
+  2. Download `privacyfence-suite-<config>.tar.gz` and `SHA256SUMS` into a `mktemp -d` directory,
+     removed by a `trap` on exit.
+  3. Verify the archive against its `SHA256SUMS` line. On a mismatch or a missing line, print
+     `install: checksum mismatch for <asset>` and exit 1.
+  4. Unpack into the temp directory.
+  5. Install:
+     - **Fresh:** if `DIR` exists and is not empty, print
+       `install: <DIR> exists; use --upgrade to update it` and exit 1. Otherwise move the folder to
+       `DIR`, then `cp .env.example .env`.
+     - **`--upgrade`:** `DIR/VERSION` must exist, or print `install: <DIR> is not a suite folder` and
+       exit 1. Copy the unpacked files over `DIR`. The archive holds no `.env`, `privacyfence.env` or
+       secret file, so the operator's files are never touched. Print `upgraded <old> -> <new>`, then
+       `docker compose pull && docker compose up -d` as the next step. Files that a release dropped
+       are left in place, and the release notes name them.
+  6. `--start` runs `docker compose up -d` in `DIR`. Compose itself refuses with the `:?` message
+     while `.env` is incomplete, so this is useful straight away only for `localhost`.
+  7. Print the configuration's next steps (a `case` on `<config>`):
+     - `localhost`: `docker compose up -d`, then `docker compose logs privacyfence | grep "Setup code"`;
+     - the others: edit `.env`. `caddy-idp`: also write `secrets/idp_client_secret`.
+       `nginx-google`: also follow `nginx/README.md`. Then `docker compose up -d`. The links point to
+       the README at the tag.
+- It never prints a secret (it handles none), never runs `sudo`, and writes only inside `DIR` and its
+  temp directory.
+
+**Piping to `sh` is a convenience.** The README also gives the verified path: download `install.sh`
+and `SHA256SUMS`, check them with `sha256sum -c --ignore-missing SHA256SUMS`, then run
+`sh install.sh <config>`. The archives carry GitHub build provenance (below), checkable with
+`gh attestation verify <file> --repo privacyfence/privacyfence-suite`.
+
+**`scripts/build_release.sh <version> [outdir]`** (POSIX `sh`, default `outdir` `dist/`):
+
+- `<version>` must match `^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`. Otherwise it prints
+  `build_release: bad version <v>` and exits 2.
+- The files come from `git ls-files configs/<config>`. Untracked files (a local `.env`, secrets,
+  certificates) can never reach an archive.
+- Archives are reproducible:
+  - `tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@$SOURCE_DATE_EPOCH`;
+  - `gzip -n`;
+  - `zip -X`;
+  - `SOURCE_DATE_EPOCH` defaults to the commit time (`git log -1 --format=%ct`).
+- It stamps `install.sh` with `sed`, then fails if `@VERSION@` or `@CONFIGS@` is left in it.
+- It writes `SHA256SUMS` last, sorted by name.
+
+**`.github/workflows/release.yml`** runs on `push: tags: ['v[0-9]*']`, with one job:
+
+- **Permissions:** `contents: write`, `id-token: write`, `attestations: write`. Every action is
+  pinned by full SHA.
+- **Guards:**
+  - checkout with `fetch-depth: 0`;
+  - the tag's commit is on `origin/main` (`git merge-base --is-ancestor`);
+  - `CHANGELOG.md` has a `## [X.Y.Z]` section, extracted with `awk` to `notes.md`, and the section
+    is not empty.
+- **Checks:** the `check` job's steps (`pytest`, `check_configs.py`, `ruff`).
+- **Publish:**
+  - `scripts/build_release.sh X.Y.Z dist`;
+  - `actions/attest-build-provenance` on `dist/*`;
+  - `gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --notes-file notes.md`, plus
+    `--prerelease` when the version has a `-`. A pre-release is skipped by `releases/latest`, so
+    `latest` keeps pointing at the last full release.
+
+**Versioning.** The suite has its own semver, starting at `0.1.0`. A release that changes an image
+tag says so in its CHANGELOG section. The first release pins PrivacyFence `7.0.0b1`, a pre-release.
+It can still be a full suite release; the README says which PrivacyFence it ships.
+
 ### `scripts/check_configs.py`
 
 It reads `configs/*/` using the standard library and PyYAML.
 
 - **Output.** When every check passes it prints `ok: <n> configurations` and exits 0. Otherwise it
   prints one line per problem, `<config>: <message>`, and exits 1.
-- **The proxy.** It is the service named `caddy` or `nginx`. A configuration with neither has no
-  proxy.
+- **The proxy.** It is the service named `caddy`. A configuration without it has no proxy
+  container. (p1 shipped `PROXIES = ["caddy", "nginx"]`; p4 makes it `["caddy"]`.)
+- **Host-proxy configuration.** A configuration with an `nginx/` folder holding at least one
+  `*.conf` file. `nginx-google` is the only one. Checks 13 to 17 apply to it.
+- Rows 1 to 12 are p1's, and only row 12 changes (p4). Rows 13 to 17 are new in p4.
 
 | # | Check | Message |
 |---|---|---|
@@ -721,7 +969,12 @@ It reads `configs/*/` using the standard library and PyYAML.
 | 9b | with a proxy: its `aliases` contain the three `${…_HOSTNAME:?` references | `proxy aliases must list the three hostnames` |
 | 10 | every `environment:` is a mapping; no key matching `(?i)(secret\|password\|_key)$` | `<service>.environment must be a mapping` / `<service>.<key> must come from a file` |
 | 11 | the secret volumes belong to `pf-secrets`: `privacyfence`, `peek-secrets`: `peek`, `grist-secrets`: `grist`, `provisioner-secrets`: `grist-provisioner` (a constant in the script); a service other than `init` mounts no secret volume but its own, and the proxy mounts none | `<service> mounts <volume>` |
-| 12 | in `templates/*.template`, no `proxy_set_header` appears inside a `location` block (nginx inheritance) | `proxy_set_header inside a location in <file>:<line>` |
+| 12 | in `templates/*.template` **and `nginx/*.conf`**, no `proxy_set_header` appears inside a `location` block (nginx inheritance) | `proxy_set_header inside a location in <file>:<line>` |
+| 13 | no service is named `nginx` (nginx runs on the host) | `nginx runs on the host; remove the nginx service` |
+| 14 | host-proxy: no service has `ports:` | `<service> must not publish ports; the host's nginx connects to the fixed addresses` |
+| 15 | host-proxy: network `pf` has `ipam.config[0].gateway == 172.30.87.1`, `PRIVACYFENCE_TRUSTED_PROXIES == 172.30.87.1` and `PEEK_TRUSTED_PROXY_CIDRS == 172.30.87.1/32` | `the pf network gateway must be 172.30.87.1` / `PRIVACYFENCE_TRUSTED_PROXIES must be the pf gateway` / `PEEK_TRUSTED_PROXY_CIDRS must be the pf gateway` |
+| 16 | host-proxy: `privacyfence`, `peek` and `grist` each have `extra_hosts` entries starting with `${PF_HOSTNAME:?`, `${PEEK_HOSTNAME:?` and `${GRIST_HOSTNAME:?` and ending with `:172.30.87.1` | `<service> extra_hosts must map the three hostnames to 172.30.87.1` |
+| 17 | host-proxy: in `nginx/*.conf`, every `proxy_pass` target is `http://<ipv4_address>:<port>` of a service in `compose.yaml` (port from the table in "Services and addresses", a constant in the script), and at least one of the files contains `$remote_addr != <privacyfence's ipv4_address>` | `proxy_pass <target> in <file>:<line> is not a service's fixed address` / `nginx config must limit /api/provisioning/ to privacyfence` |
 
 ### CI
 
@@ -734,7 +987,8 @@ every action pinned by full SHA. These jobs block:
   - `cp .env.example .env`;
   - for each placeholder in the table below, `sed -i "s|^KEY=.*|KEY=value|" .env`;
   - `docker compose config -q`.
-- **`shellcheck`:** `shellcheck -s sh common/init.sh`.
+- **`shellcheck`:** `shellcheck -s sh common/init.sh` (p5 adds `release/install.sh` and
+  `scripts/build_release.sh`).
 - **`grist-image`** (added in p2), for the `GRIST_IMAGE_TAG` in `configs/localhost/.env.example`:
   - `docker image inspect` gives the `Entrypoint` and `Cmd` arrays, and they must equal
     `["./sandbox/docker_entrypoint.sh"]` and `["./sandbox/run.sh"]`, the values the wrapper in every
@@ -745,13 +999,19 @@ every action pinned by full SHA. These jobs block:
     is off.
 - **`caddy`** (added in p3): for each Caddy configuration,
   `docker run --rm -v ./configs/<c>/Caddyfile:/etc/caddy/Caddyfile:ro -e PF_HOSTNAME=pf.example.com -e PEEK_HOSTNAME=peek.example.com -e GRIST_HOSTNAME=grist.example.com caddy:<tag> caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`.
-- **`nginx`** (added in p4):
+- **`nginx`** (added in p4), with `NGINX_IMAGE: nginx:1.28.0` pinned in the job's `env:` (CI only;
+  the stack has no nginx image):
   1. Make a self-signed certificate for the three placeholder names with `openssl req -x509` into a
-     temp `certs/`.
-  2. `docker run --rm` the nginx image with the template and the certificate mounted and the same
-     three `-e` values, and the command
-     `sh -c '/docker-entrypoint.d/20-envsubst-on-templates.sh && nginx -t'`.
-  3. `grep -q 'server_name pf.example.com' /etc/nginx/conf.d/default.conf` inside the same run.
+     temp directory.
+  2. `docker run --rm` that image with `configs/nginx-google/nginx/privacyfence-suite.conf` mounted
+     at `/etc/nginx/conf.d/default.conf` (replacing the image's default site) and the certificate at
+     `/etc/ssl/privacyfence-suite/`, and the command `nginx -t`. The file is tested exactly as
+     shipped, placeholders included, which proves it parses in the `http` context.
+  3. `grep -c 'server_name' configs/nginx-google/nginx/privacyfence-suite.conf` prints 4.
+- **`release`** (added in p5): `scripts/build_release.sh 0.0.0-ci dist`, then `sha256sum -c
+  SHA256SUMS` in `dist/`, then `unzip -l` of each zip, and an upload of `dist/` with
+  `actions/upload-artifact` (7-day retention). The behaviour is already tested by `pytest`
+  (`tests/test_release.py`); this job proves the build on a clean runner and keeps the assets for review.
 
 **CI placeholders:**
 
@@ -822,7 +1082,10 @@ source is `docs/privacyfence-suite-plan-manual-steps.html`.
   - `ma1-localhost`: run the localhost stack on your own computer.
   - `ma2-caddy-google`: deploy `caddy-google` on a server.
   - `ma3-caddy-idp`: deploy `caddy-idp` with your own identity provider, if you have one.
-  - `ma4-nginx-google`: start `nginx-google` with a real certificate.
+  - `ma4-nginx-google`: install the example site configuration in the host's nginx, with a real
+    certificate, and start `nginx-google` (no nginx container).
+  - `ma5-release`: after the feature PR merges, cut `v0.1.0` and install from it with one `curl`,
+    both piped to `sh` and as a zip.
 
 ## Risks and open questions
 
@@ -849,6 +1112,26 @@ source is `docs/privacyfence-suite-plan-manual-steps.html`.
   README already explains.
 - **Compose versions.** `env_file` with `required: false` needs Compose 2.24, and `--wait-timeout`
   needs 2.20. The README states Docker Engine 24+ and Compose 2.24+.
+- **The host's nginx cannot reach the containers, or they cannot reach it** (`nginx-google`).
+  - Docker Desktop and rootless Docker do not route to container addresses. The README sends those
+    users to `caddy-google`.
+  - A host firewall (ufw, firewalld) may drop `pf-suite` → host:443. Grist's wrapper then logs
+    `PrivacyFence is not reachable` and Peek's SSO fails. `nginx/README.md` has the firewall line,
+    and `ma4` checks it.
+  - nginx bound to a single public address does not answer on `172.30.87.1`. `nginx/README.md` says
+    to keep the plain `listen 443 ssl;`.
+  - The certificate must be trusted by the containers' own CA bundles. A private CA does not work
+    without extra mounts; the README says to use a public certificate.
+  - If `ma4` shows the source address is not `172.30.87.1` (for example, a Docker version that
+    masquerades host-to-container traffic), the fix is `<PROXY_ADDR>`. Record the observed address
+    and change checks 15 and the compose file in one follow-up PR.
+- **Piping to `sh`.** A cut-off download runs nothing (the whole-file guard). A tampered
+  `install.sh` cannot be detected while piping. The README gives the verified path and the
+  provenance check next to the one-liner.
+- **`releases/latest` and pre-releases.** `latest` skips pre-releases. Tag `v0.1.0`, not
+  `v0.1.0-rc1`, if the one-liner should work from the first release.
+- **`curl` on minimal hosts.** `install.sh` falls back to `wget`. Without either, the README's
+  archive download needs a browser and `scp`, which is documented in one line.
 
 ## Appendix A: `.claude/toolkit.yaml`
 
@@ -878,12 +1161,13 @@ verify:
     - python3 scripts/check_configs.py
     - ruff check .
   dod_manual:
-    - "A change to a configuration's compose.yaml, proxy config or .env.example needs the ci.yml run on the pushed branch to be green (docker compose config, caddy validate, nginx -t, shellcheck)."
+    - "A change to a configuration's compose.yaml, Caddyfile, nginx example config or .env.example needs the ci.yml run on the pushed branch to be green (docker compose config, caddy validate, nginx -t on the example, shellcheck)."
+    - "A change to release/install.sh, scripts/build_release.sh or release.yml needs the ci.yml run on the pushed branch to be green, including the release job."
     - "A change that can affect the localhost stack needs the e2e-localhost.yml run on the pushed branch to be green."
 ci:
   dispatchable:
     - workflow: ci.yml
-      use_when: "docker compose config for every configuration, caddy validate, nginx -t and shellcheck (the cloud session has no Docker)"
+      use_when: "docker compose config for every configuration, caddy validate, nginx -t on the host example config, shellcheck and the release build (the cloud session has no Docker)"
       notes: "Runs by itself on every push and pull request; read that run."
     - workflow: e2e-localhost.yml
       use_when: "The localhost stack started for real: every container healthy and PrivacyFence connected to Peek and Grist"
@@ -921,15 +1205,20 @@ manual_after:
     title: Deploy configs/caddy-idp with your own identity provider (skip if you have none)
     why: Checks PrivacyFence against a real identity provider and that the identity reaches Peek and Grist
   - id: ma4-nginx-google
-    title: Start configs/nginx-google with a real certificate
-    why: Checks websockets (Grist), server-sent events (Peek) and MCP streaming (PrivacyFence) through nginx
+    title: Install the nginx example config in the host's nginx with a real certificate, and start configs/nginx-google
+    why: Checks the host-nginx design that CI cannot run - the containers reaching the host's nginx on 172.30.87.1 through the firewall, the trusted-proxy address the apps see, websockets (Grist), server-sent events (Peek), MCP streaming (PrivacyFence) and the provisioner's 404
+  - id: ma5-release
+    title: After the feature PR merges, cut v0.1.0 and install from it with one curl
+    why: Only a real tag on main runs release.yml and publishes assets under releases/latest/download; CI tests the installer over file:// only
 verify_after_merge:
   - python3 -m pip install -q -r requirements-dev.txt && python3 -m pytest tests -q && python3 scripts/check_configs.py
 final_checks:
   - docs/privacyfence-suite-plan.md and docs/privacyfence-suite-plan-manual-steps.html are deleted and nothing links to them
   - CHANGELOG.md has entries under "## [Unreleased]" and no version heading
-  - the ci.yml and e2e-localhost.yml runs on the feature branch's head are green
+  - the ci.yml and e2e-localhost.yml runs on the feature branch's head are green, including the nginx and release jobs
+  - no file under configs/ names an nginx image, and configs/nginx-google has no compose service named nginx
 phases:
+  # status: merged into feature/privacyfence-suite (4515e2d). Not re-run.
   - id: p1-skeleton
     title: Consistency checker, init script, base CI and repository basics
     depends_on: []
@@ -962,6 +1251,7 @@ phases:
       - python3 scripts/check_configs.py prints "ok: 0 configurations"
       - shellcheck is green in the ci.yml run on the pushed branch, and the whole run is green
 
+  # status: on hold mid-phase on feature/privacyfence-suite--p2-localhost (72a77f3). Resume as written.
   - id: p2-localhost
     title: The localhost configuration, the Grist image check and the end-to-end workflow
     depends_on: [p1-skeleton]
@@ -1037,50 +1327,112 @@ phases:
       - git ls-files configs/caddy-idp/secrets lists .gitkeep and README.md
       - the ci.yml run on the pushed branch is green
 
-  - id: p4-nginx
-    title: The nginx-google configuration
+  - id: p4-nginx-host
+    title: The nginx-google configuration for an nginx already on the host (example config, no container)
     depends_on: [p3-caddy]
-    complexity: S
+    complexity: M
     touches:
       - configs/nginx-google/**
+      - scripts/check_configs.py
+      - tests/test_check_configs.py
+      - tests/fixtures/**
       - .github/workflows/ci.yml
+      - .gitignore
     brief: |
-      Read docs/privacyfence-suite-plan.md: "nginx (nginx-google)" and "caddy-google and nginx-google".
-      1. Copy configs/caddy-google/compose.yaml to configs/nginx-google/compose.yaml and rename the project to privacyfence-nginx-google. Replace the caddy service with an nginx service:
-         - image `nginx:${NGINX_IMAGE_TAG:?pin a version in .env}`;
-         - the same fixed address 172.30.87.2 and aliases;
-         - the three hostname variables in environment:;
-         - the two mounts and ports 80 and 443;
-         - depends only on init; no caddy volumes.
-
-         .env.example: copy caddy-google's, replace CADDY_IMAGE_TAG with NGINX_IMAGE_TAG=1.28.0.
-      2. configs/nginx-google/templates/default.conf.template: the map, the port-80 server and the three server blocks written out in full, as the Design specifies, with the fixed-address upstreams.
-      3. configs/nginx-google/certs/README.md: the two file names, that they must cover all three names, and that the key must be readable by the nginx container. Copy init.sh from common/init.sh. No secrets/ folder.
-      4. ci.yml: the nginx job as specified, including the server_name grep.
-      5. Run python3 scripts/check_configs.py; it must print "ok: 4 configurations". Push and read ci.yml: the nginx job must be green.
+      Read docs/privacyfence-suite-plan.md: "Services and addresses", "Per-app settings shared by the proxy configurations" (the <PROXY_ADDR> table), "caddy-google and nginx-google", "nginx-google: nginx on the host, example configuration only", "scripts/check_configs.py" (rows 12 to 17) and "CI" (the nginx job). There is no nginx container anywhere: do not add an nginx service, image tag, templates/ or certs/ folder.
+      1. configs/nginx-google/compose.yaml: copy configs/caddy-google/compose.yaml, rename the project to privacyfence-nginx-google and delete the caddy service and the caddy-data/caddy-config volumes. Then:
+         - give the pf network driver_opts com.docker.network.bridge.name: pf-suite and ipam gateway 172.30.87.1 (keep the subnet);
+         - add the three extra_hosts entries ("${X_HOSTNAME:?set X_HOSTNAME in .env}:172.30.87.1") to privacyfence, peek and grist;
+         - set PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.1 and PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.1/32;
+         - make sure no service has ports:.
+         Update the header comment: nginx runs on the host; see nginx/README.md.
+      2. configs/nginx-google/.env.example: caddy-google's without CADDY_IMAGE_TAG. configs/nginx-google/init.sh: copy common/init.sh byte for byte. No secrets/ folder.
+      3. configs/nginx-google/nginx/privacyfence-suite.conf: the map, the port-80 server and the three server blocks written out in full, exactly as the Design shows, with the placeholder names and the fixed-address upstreams.
+      4. configs/nginx-google/nginx/README.md, short:
+         - requirements (Linux, rootful Docker, nginx 1.25.1+, plain listen 80/443, a public certificate for the three names);
+         - the render-and-reload commands from the Design;
+         - where to change the certificate paths;
+         - the ufw line (and "the same for firewalld: allow the pf-suite interface to reach TCP 443");
+         - the certbot http-01 note;
+         - the check `curl -s -o /dev/null -w "%{http_code}" https://<grist host>/api/provisioning/self` prints 404 from outside.
+      5. scripts/check_configs.py: PROXIES = ["caddy"]; check 12 also reads nginx/*.conf; add checks 13 to 17 with the exact messages in the table. A configuration is host-proxy when nginx/ holds a *.conf file.
+      6. tests: add tests/fixtures/hostproxy/ (common/init.sh and configs/a/ with the five services on the pf network as the Design specifies, and nginx/a.conf with the four fixed upstreams and the $remote_addr guard). Add test_hostproxy_tree_ok, and test_check_13 to test_check_17, each breaking one thing in a copy and asserting the exact message and exit code 1. Add a second test_check_12 case that writes nginx/broken.conf (a proxy_set_header inside a location, no proxy_pass) into the hostproxy tree; keep the existing templates/*.template case. Every existing test must still pass.
+      7. .gitignore: add dist/.
+      8. ci.yml: the nginx job as specified (NGINX_IMAGE pinned in the job env, self-signed certificate, nginx -t on the shipped file, the server_name count).
+      9. Run python3 -m pytest tests -q, python3 scripts/check_configs.py (it must print "ok: 4 configurations") and ruff check . Push and read the ci.yml run: compose (all four folders) and nginx must be green.
     acceptance:
       - python3 scripts/check_configs.py prints "ok: 4 configurations"
-      - grep -n "allow 172.30.87.10" configs/nginx-google/templates/default.conf.template finds the line
-      - grep -c "proxy_pass http://172.30.87." configs/nginx-google/templates/default.conf.template prints 4
-      - grep -c "proxy_set_header Upgrade" configs/nginx-google/templates/default.conf.template prints 1
-      - the ci.yml run on the pushed branch is green
+      - python3 -m pytest tests -q passes, including test_check_13 to test_check_17 and test_hostproxy_tree_ok
+      - cmp common/init.sh configs/nginx-google/init.sh exits 0
+      - grep -rn "image: nginx\|NGINX_IMAGE_TAG" configs/ finds nothing, and test ! -e configs/nginx-google/templates && test ! -e configs/nginx-google/certs
+      - grep -c "proxy_pass http://172.30.87." configs/nginx-google/nginx/privacyfence-suite.conf prints 4
+      - grep -c "proxy_set_header Upgrade" configs/nginx-google/nginx/privacyfence-suite.conf prints 1
+      - grep -n 'remote_addr != 172.30.87.10' configs/nginx-google/nginx/privacyfence-suite.conf finds the line
+      - the ci.yml run on the pushed branch is green, including the nginx job
 
-  - id: p5-docs-retire
-    title: README, configuration and operations docs, changelog, delete the plan
-    depends_on: [p4-nginx]
+  - id: p5-release
+    title: Release workflow, per-configuration archives and the curl-to-sh installer
+    depends_on: [p4-nginx-host]
+    complexity: M
+    touches:
+      - release/install.sh
+      - scripts/build_release.sh
+      - tests/test_release.py
+      - .github/workflows/release.yml
+      - .github/workflows/ci.yml
+    brief: |
+      Read docs/privacyfence-suite-plan.md: "Release and install: one download" and "CI" (the release and shellcheck jobs). Do not create a tag or a release; that is ma5-release.
+      1. scripts/build_release.sh <version> [outdir], POSIX sh with set -eu, exactly as designed:
+         - check the version;
+         - take the files from git ls-files per configuration;
+         - write one top folder privacyfence-<config>/ per archive, with README.md, LICENSE and VERSION;
+         - make reproducible .tar.gz and .zip files;
+         - stamp install.sh and fail on a leftover @VERSION@ or @CONFIGS@;
+         - write SHA256SUMS last.
+         The configuration list is the folders under configs/, sorted.
+      2. release/install.sh, POSIX sh, exactly as designed: the functions with `main "$@"` as the last line, the usage and exit codes, the exact messages, PRIVACYFENCE_SUITE_BASE_URL, curl or wget, the checksum check, fresh or --upgrade, --start, and the next steps per configuration. It must pass `shellcheck -s sh` and run under dash.
+      3. tests/test_release.py (pytest, subprocess, tmp_path; it needs sh, git, tar, gzip, zip, unzip, curl and sha256sum, so install zip/unzip with apt if the container lacks them, and do not skip). Build with version 1.2.3 into tmp_path/dist, with SOURCE_DATE_EPOCH fixed. Then assert:
+         - the asset list is exactly install.sh, SHA256SUMS and a .tar.gz and a .zip per configuration;
+         - `sha256sum -c SHA256SUMS` passes;
+         - two builds give byte-identical .tar.gz files;
+         - every archive member is under privacyfence-<config>/, includes compose.yaml, .env.example, init.sh, VERSION (1.2.3), README.md and LICENSE, and includes no .env, *.pem or secrets/ file other than .gitkeep and README.md;
+         - install.sh contains 1.2.3 and no @VERSION@ or @CONFIGS@.
+         Then install over file:// with PRIVACYFENCE_SUITE_BASE_URL and assert:
+         - `sh install.sh localhost --dir X` gives X/.env equal to X/.env.example, and X/init.sh equal to common/init.sh;
+         - piping works: `sh -s -- caddy-idp --dir Y` with install.sh as stdin;
+         - a second install into X exits 1 with the "exists" message;
+         - --upgrade keeps an edited X/.env and a written Y/secrets/idp_client_secret, and prints "upgraded 1.2.3 -> 1.2.3";
+         - a tampered archive exits 1 with "checksum mismatch";
+         - an unknown configuration and no arguments both exit 2 and list the four configurations;
+         - a truncated install.sh (its first half) piped to sh changes nothing on disk.
+      4. .github/workflows/release.yml exactly as designed: the guards, the checks, the build, attest-build-provenance and gh release create. Pin every action by full SHA with a version comment; copy actions/attest-build-provenance's pin from privacyfence/grist-core's pf release workflow if it has one, otherwise use the newest release's commit.
+      5. ci.yml: the release job, and shellcheck now also covers release/install.sh and scripts/build_release.sh.
+      6. Run python3 -m pytest tests -q and ruff check . Push and read the ci.yml run; it must be green, including release and shellcheck.
+    acceptance:
+      - python3 -m pytest tests -q passes, including tests/test_release.py with none skipped
+      - sh scripts/build_release.sh 1.2.3 /tmp/d && (cd /tmp/d && sha256sum -c SHA256SUMS) succeeds and /tmp/d holds 10 files
+      - tail -n 1 release/install.sh is exactly main "$@"
+      - grep -n "contents: write" .github/workflows/release.yml finds it and .github/workflows/ci.yml still has only contents read
+      - the ci.yml run on the pushed branch is green, including release and shellcheck
+
+  - id: p6-docs-retire
+    title: README with one-command install, configuration, operations and release docs, changelog, delete the plan
+    depends_on: [p5-release]
     complexity: M
     touches:
       - README.md
       - docs/configurations.md
       - docs/operations.md
+      - docs/releasing.md
       - CHANGELOG.md
       - docs/privacyfence-suite-plan.md
       - docs/privacyfence-suite-plan-manual-steps.html
     brief: |
       1. README.md:
          - what the suite is, and the table of the four configurations from the Goal;
-         - prerequisites: Docker Engine 24+ and Compose 2.24+; DNS and ports 80/443 for the proxy configurations;
-         - a quick start per configuration: copy the folder, `cp .env.example .env`, edit it, write the secret file (caddy-idp only), then `docker compose up -d`, then the first sign-in. For localhost, the setup code is in `docker compose logs privacyfence`;
+         - prerequisites: Docker Engine 24+ and Compose 2.24+; DNS and ports 80/443 for the proxy configurations; for nginx-google, nginx 1.25.1+ already on a Linux host with rootful Docker (Docker Desktop and rootless users take caddy-google);
+         - "Install": the curl | sh one-liner (latest and pinned forms), the archive download (zip and tar.gz), and the verified path (download install.sh and SHA256SUMS, sha256sum -c --ignore-missing, gh attestation verify);
+         - a quick start per configuration after installing: edit .env, write the secret file (caddy-idp only), set up the host's nginx from nginx/README.md (nginx-google only), then `docker compose up -d`, then the first sign-in. For localhost, `--start` and the setup code from `docker compose logs privacyfence`;
          - a section "What is already connected", saying that:
            - Peek and Grist sign people in through PrivacyFence (Sign in with SSO), so whatever PrivacyFence uses upstream applies to all three;
            - each person who signs in to PrivacyFence gets their Peek account and Grist key connected;
@@ -1088,21 +1440,26 @@ phases:
            - signing out of Peek or Grist leaves the PrivacyFence session;
          - sign-in notes: caddy-google and nginx-google admit only verified Google Workspace accounts (no personal Gmail) and need outbound HTTPS to oauth.privacyfence.eu; ALLOWED_DOMAIN limits who signs in to all three apps, and PrivacyFence takes it only at its first start (later changes go through its Admin page); with caddy-idp, an IdP that sends no email_verified (for example Entra ID) needs IDP_TRUST_UNVERIFIED_EMAIL=true, which trusts addresses in ALLOWED_DOMAIN;
          - a section "Admins", from the Design's "Admins": PEEK_ADMIN_EMAILS and GRIST_ADMIN_EMAIL are dedicated addresses that are not auto-connected, localhost has no Peek admin, and Grist on localhost is administered by the boot key only;
+         - which PrivacyFence, Peek, Grist and provisioner versions this release pins;
          - that Grist comes from PrivacyFence's grist-core fork (open-source build, full-edition switch off, lock-out check on every release), with a link to the fork's pf/README.md; the rootless-Docker note for secrets/idp_client_secret;
          - links to PrivacyFence's docs/org-mode-docker.md, docs/org-mode-setup-guide.md (built-in Google sign-in, relay DNS records) and docs/oidc-provider.md, to Peek's auth docs, and to grist-provisioner's README.
-      2. docs/configurations.md: one table per configuration listing every .env variable, its meaning and where it ends up (which container variable), plus a table of the generated values with the volumes and owners of their copies.
+      2. docs/configurations.md: one table per configuration listing every .env variable, its meaning and where it ends up (which container variable), plus a table of the generated values with the volumes and owners of their copies, and for nginx-google the network facts (bridge pf-suite, gateway 172.30.87.1, extra_hosts, trusted proxy).
       3. docs/operations.md:
-         - Upgrade: change the tags, then `docker compose pull && docker compose up -d`.
+         - Install: the one-liner and the archive.
+         - Upgrade: `install.sh <config> --dir <dir> --upgrade` from the new release (or unpack the new archive over the folder), then `docker compose pull && docker compose up -d`; for nginx-google, re-render nginx/privacyfence-suite.conf if the release notes say it changed.
          - Backup: stop, then archive each volume with a `docker run --rm -v <volume>:/v alpine tar` command, then start.
          - Rotating a generated value: remove its canonical copy with `docker compose run --rm --no-deps init rm /out/pf/.<name>`, then `docker compose up -d --force-recreate`.
          - Rotating the IdP secret: replace secrets/idp_client_secret, then `docker compose up -d` and `docker compose restart privacyfence`. PrivacyFence and Grist read every secret once at start, so a rotation always ends with a restart or recreate.
          - Removing a person: PrivacyFence's `--peek-release` and `--grist-release` through `docker compose exec`.
-         - Troubleshooting: the init log lines; where each app logs provisioning; on localhost, a PrivacyFence restart needs `docker compose up -d` to bring the other three back; Grist restarting while waiting for PrivacyFence.
-      4. CHANGELOG.md under "## [Unreleased]", "### Added": "- The four configurations: caddy-idp, caddy-google, nginx-google and localhost, with generated provisioning keys and OIDC client secrets, Peek and Grist signing in through PrivacyFence, and connected at sign-in."
-      5. Delete docs/privacyfence-suite-plan.md and docs/privacyfence-suite-plan-manual-steps.html; `grep -rn --exclude-dir=.git "privacyfence-suite-plan" .` must find nothing.
+         - Troubleshooting: the init log lines; where each app logs provisioning; on localhost, a PrivacyFence restart needs `docker compose up -d` to bring the other three back; Grist restarting while waiting for PrivacyFence; for nginx-google, the firewall and listen-address causes and `docker compose exec privacyfence wget -qO- https://<grist host>/status`-style reachability checks (use whatever client the image has; check it).
+      4. docs/releasing.md: move "## [Unreleased]" to "## [X.Y.Z] - YYYY-MM-DD" with a new empty Unreleased above it, merge to main, `git tag -a vX.Y.Z -m vX.Y.Z` on main and push the tag; release.yml does the rest; a "-" in the version makes a pre-release that releases/latest skips; checking the result with the one-liner.
+      5. CHANGELOG.md under "## [Unreleased]", "### Added": "- The four configurations: caddy-idp, caddy-google, nginx-google (for an nginx already on the host, with an example site configuration) and localhost, with generated provisioning keys and OIDC client secrets, Peek and Grist signing in through PrivacyFence, and connected at sign-in." and "- One-command install: per-configuration .zip and .tar.gz release assets, an install.sh for curl | sh, SHA256SUMS and build provenance."
+      6. Delete docs/privacyfence-suite-plan.md and docs/privacyfence-suite-plan-manual-steps.html; `grep -rn --exclude-dir=.git "privacyfence-suite-plan" .` must find nothing.
     acceptance:
       - test ! -e docs/privacyfence-suite-plan.md && test ! -e docs/privacyfence-suite-plan-manual-steps.html
       - grep -rn --exclude-dir=.git "privacyfence-suite-plan" . finds nothing
       - grep -n "What is already connected" README.md finds the section
       - grep -n "^## Admins" README.md finds the section
+      - grep -n "releases/latest/download/install.sh | sh -s --" README.md finds the one-liner
+      - test -s docs/releasing.md
 ```
