@@ -185,3 +185,83 @@ def test_check_12(tmp_path, capsys):
         "server {\n    location / {\n        proxy_set_header Host $host;\n    }\n}\n"
     )
     assert_fails(tree, capsys, "a: proxy_set_header inside a location in templates/default.conf.template:3")
+
+
+def test_check_12_nginx_conf(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    (tree / "configs/a/nginx/broken.conf").write_text(
+        "server {\n    location / {\n        proxy_set_header Host $host;\n    }\n}\n"
+    )
+    assert_fails(tree, capsys, "a: proxy_set_header inside a location in nginx/broken.conf:3")
+
+
+def test_hostproxy_tree_ok(tmp_path, capsys):
+    assert check_configs.main(make_tree(tmp_path, "hostproxy")) == 0
+    assert capsys.readouterr().out == "ok: 1 configurations\n"
+
+
+def test_check_13(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"].update(nginx={"image": "nginx:${NGINX_IMAGE_TAG:?pin a version in .env}"}))
+    with (tree / "configs/a/.env.example").open("a") as f:
+        f.write("NGINX_IMAGE_TAG=1.28.0\n")
+    assert_fails(
+        tree,
+        capsys,
+        "a: nginx must depend on init with service_completed_successfully",
+        "a: nginx runs on the host; remove the nginx service",
+    )
+
+
+def test_check_14(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"]["peek"].update(ports=["7700:7700"]))
+    assert_fails(
+        tree, capsys, "a: peek must not publish ports; the host's nginx connects to the fixed addresses"
+    )
+
+
+def test_check_15_gateway(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["networks"]["pf"]["ipam"]["config"][0].update(gateway="172.30.87.254"))
+    assert_fails(tree, capsys, "a: the pf network gateway must be 172.30.87.1")
+
+
+def test_check_15_trusted_proxies(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    replace_in(
+        tree / "configs/a/compose.yaml",
+        "PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.1",
+        "PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.2",
+    )
+    assert_fails(tree, capsys, "a: PRIVACYFENCE_TRUSTED_PROXIES must be the pf gateway")
+
+
+def test_check_15_peek_cidrs(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    replace_in(
+        tree / "configs/a/compose.yaml",
+        "PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.1/32",
+        "PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.2/32",
+    )
+    assert_fails(tree, capsys, "a: PEEK_TRUSTED_PROXY_CIDRS must be the pf gateway")
+
+
+def test_check_16(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"]["grist"]["extra_hosts"].pop())
+    assert_fails(tree, capsys, "a: grist extra_hosts must map the three hostnames to 172.30.87.1")
+
+
+def test_check_17_target(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    replace_in(tree / "configs/a/nginx/a.conf", "http://172.30.87.11:7700", "http://172.30.87.99:7700")
+    assert_fails(
+        tree, capsys, "a: proxy_pass http://172.30.87.99:7700 in nginx/a.conf:16 is not a service's fixed address"
+    )
+
+
+def test_check_17_guard(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    replace_in(tree / "configs/a/nginx/a.conf", "$remote_addr != 172.30.87.10", "$remote_addr != 172.30.87.50")
+    assert_fails(tree, capsys, "a: nginx config must limit /api/provisioning/ to privacyfence")
