@@ -1,7 +1,7 @@
 # Hetzner VM + Cloudflare proxy + nginx + Google sign-in
 
 Runs the `nginx-google` configuration of the suite on a fresh Ubuntu/Debian VM, behind Cloudflare
-(orange cloud), for `pf.tkcs.name`, `peek.tkcs.name` and `grist.tkcs.name`. SSH only over Tailscale.
+(orange cloud), for `pf.example.com`, `peek.example.com` and `grist.example.com`. SSH only over Tailscale.
 
 ## Why a Let's Encrypt certificate and not a Cloudflare Origin CA certificate
 
@@ -16,7 +16,7 @@ with the proxy on. Cloudflare SSL/TLS mode **Full (strict)** accepts it.
 
 1. **Cloudflare DNS**: `A` (and `AAAA` if the VM has IPv6) records for the three names to the VM, proxied.
 2. **Cloudflare SSL/TLS mode**: Full (strict). Leave "Always Use HTTPS" on.
-3. **Cloudflare API token**: My Profile → API Tokens → Edit zone DNS template, limited to the `tkcs.name` zone
+3. **Cloudflare API token**: My Profile → API Tokens → Edit zone DNS template, limited to the `example.com` zone
    (needs Zone:DNS:Edit and Zone:Zone:Read). Used only by certbot.
 4. **Tailscale auth key**: https://login.tailscale.com/admin/settings/keys (one-off, not reusable).
 5. **Google Workspace**: nothing to register. `ALLOWED_DOMAIN` must be a Workspace domain whose people can sign in; personal Gmail is refused.
@@ -48,12 +48,12 @@ in `/opt/privacyfence-nginx-google`. Each step can be re-run alone (`./bootstrap
    cd /opt/privacyfence-nginx-google && docker compose exec privacyfence privacyfence-app --relay-dns-records
    ```
    Add the printed `_privacyfence-relay` TXT records in Cloudflare (TXT records are never proxied).
-2. Open `https://pf.tkcs.name` and sign in with a Workspace admin from `ADMIN_EMAILS`. Peek and Grist appear connected.
+2. Open `https://pf.example.com` and sign in with a Workspace admin from `ADMIN_EMAILS`. Peek and Grist appear connected.
 3. **Lock SSH**: from another terminal confirm `ssh root@pf-suite` (Tailscale name/IP) works, then on the VM:
    ```sh
    /root/pf-src/deploy/hetzner-cloudflare/bootstrap.sh lock-ssh
    ```
-4. Check: `curl -s -o /dev/null -w "%{http_code}\n" https://grist.tkcs.name/api/provisioning/self` prints `404`.
+4. Check: `curl -s -o /dev/null -w "%{http_code}\n" https://grist.example.com/api/provisioning/self` prints `404`.
 
 ## What differs from the stock `nginx-google` site file
 
