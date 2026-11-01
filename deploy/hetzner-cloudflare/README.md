@@ -38,7 +38,7 @@ nano /root/pf-deploy.env
 
 `all` runs: base packages, Tailscale (`--ssh`), Docker, nginx from nginx.org (distro nginx is older than the
 suite's 1.25.1 minimum), the certificate, Cloudflare IP ranges (real client IP + firewall), ufw, then
-downloads the suite release (checksum verified), fills `.env`, installs the nginx site and starts the stack
+downloads suite release 0.1.0 (`SUITE_VERSION`, checksum verified), pins PrivacyFence to 7.0.0 (`PRIVACYFENCE_IMAGE_TAG`), fills `.env`, installs the nginx site and starts the stack
 in `/opt/privacyfence-nginx-google`. Each step can be re-run alone (`./bootstrap.sh cert`, ...).
 
 ## Afterwards

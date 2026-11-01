@@ -131,6 +131,7 @@ step_suite() {
   setv PF_HOSTNAME "$PF_HOSTNAME"; setv PEEK_HOSTNAME "$PEEK_HOSTNAME"; setv GRIST_HOSTNAME "$GRIST_HOSTNAME"
   setv ADMIN_EMAILS "$ADMIN_EMAILS"; setv ALLOWED_DOMAIN "$ALLOWED_DOMAIN"
   setv GRIST_ADMIN_EMAIL "$GRIST_ADMIN_EMAIL"; setv PEEK_ADMIN_EMAILS "${PEEK_ADMIN_EMAILS:-}"
+  [ -z "${PRIVACYFENCE_IMAGE_TAG:-}" ] || setv PRIVACYFENCE_IMAGE_TAG "$PRIVACYFENCE_IMAGE_TAG"
 
   sed -e "s|@PF@|$PF_HOSTNAME|g" -e "s|@PEEK@|$PEEK_HOSTNAME|g" -e "s|@GRIST@|$GRIST_HOSTNAME|g" \
       -e "s|@CERT_DIR@|$CERT_DIR|g" "$HERE/site.conf.template" > /etc/nginx/conf.d/privacyfence-suite.conf
