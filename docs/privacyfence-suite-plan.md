@@ -75,7 +75,7 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
 
   | Repository | Release | Image tag |
   |---|---|---|
-  | privacyfence/privacyfence | `v7.0.0b1`, a GitHub **pre-release** | `PRIVACYFENCE_IMAGE_TAG=7.0.0b1` (only this tag; `latest` does not move to a pre-release) |
+  | privacyfence/privacyfence | `v7.0.0b1`, a GitHub **pre-release** | `PRIVACYFENCE_IMAGE_TAG=latest` (**floating, by decision**: see [Images](#services-and-addresses-all-configurations)). `7.0.0b1` is only what e2e and CI run against until 7.0.0 is released; `latest` does not move to a pre-release |
   | privacyfence/peek | `v0.18.0` | `PEEK_IMAGE_TAG=0.18.0` |
   | privacyfence/grist-provisioner | `v0.2.0` | `GRIST_PROVISIONER_IMAGE_TAG=0.2.0` |
   | privacyfence/grist-core (the fork) | `v1.7.22-pf.3`, published 2026-11-01 | `GRIST_IMAGE_TAG=1.7.22-pf.3` |
@@ -279,13 +279,31 @@ __pycache__/
 | `caddy` (Caddy configurations only) | `caddy:${CADDY_IMAGE_TAG:?pin a version in .env}` | `172.30.87.2` | 80, 443 |
 | nginx (`nginx-google`) | **not a container**: the host's own nginx | reaches the stack from the `pf` network's gateway, `172.30.87.1` | 80, 443 on the host |
 
-- **Images.** `.env.example` pins a version for every image, never `latest`:
-  - `PRIVACYFENCE_IMAGE_TAG=7.0.0b1`
+- **Images.** `.env.example` pins a version for every image except PrivacyFence's, which floats.
+  **Decision (2026-11-01):** PrivacyFence is the most dynamic part of the suite, so
+  `PRIVACYFENCE_IMAGE_TAG=latest`, and a PrivacyFence update never needs a suite update (the operator
+  runs `docker compose pull privacyfence && docker compose up -d`). Everything else stays pinned, and
+  `latest` is allowed for `PRIVACYFENCE_IMAGE_TAG` only (check 4):
+  - `PRIVACYFENCE_IMAGE_TAG=latest`, with a comment saying it floats on purpose and how to pin
+    (for example `7.0.0`) to hold back an update
   - `PEEK_IMAGE_TAG=0.18.0`
   - `GRIST_IMAGE_TAG=1.7.22-pf.3`
   - `GRIST_PROVISIONER_IMAGE_TAG=0.2.0`
   - `ALPINE_IMAGE_TAG=3.22` (a minor series, which is enough for a busybox script)
   - `CADDY_IMAGE_TAG=2.10.2` (Caddy configurations only)
+
+  **`latest` today is PrivacyFence 6.13.0, which does not have what the suite needs** (the OIDC
+  clients for Peek and Grist, `PRIVACYFENCE_PEEK_AUTO_PROVISION`, the single-user email). `latest`
+  moves to 7.x only when 7.0.0 is released as a full release. Until then:
+  - **e2e and CI run PrivacyFence `7.0.0b1`**, set as `PRIVACYFENCE_IMAGE_TAG=7.0.0b1` in the
+    workflow's job `env:` (a process variable beats `.env` in Compose). Remove that override, in its
+    own commit, when 7.0.0 is out and `latest` points at it; a scheduled weekly run of
+    `e2e-localhost.yml` against `latest` then shows a PrivacyFence change that breaks the suite
+    before an operator meets it.
+  - **No suite release is cut before PrivacyFence 7.0.0 is released** (`ma5-release`), because an
+    operator who installs the suite would get 6.13.0 and a stack that does not connect.
+  - The other pins are tested together with the PrivacyFence line the suite was built for. A later
+    PrivacyFence that needs a newer Peek, Grist or provisioner is a suite update, as before.
 
   There is no `NGINX_IMAGE_TAG`. CI alone uses an nginx image, pinned in `ci.yml`, to run `nginx -t`
   on the example configuration.
@@ -940,8 +958,8 @@ and `SHA256SUMS`, check them with `sha256sum -c --ignore-missing SHA256SUMS`, th
     `latest` keeps pointing at the last full release.
 
 **Versioning.** The suite has its own semver, starting at `0.1.0`. A release that changes an image
-tag says so in its CHANGELOG section. The first release pins PrivacyFence `7.0.0b1`, a pre-release.
-It can still be a full suite release; the README says which PrivacyFence it ships.
+tag says so in its CHANGELOG section. PrivacyFence floats on `latest`, so a PrivacyFence update is not a suite release; the README says
+which PrivacyFence line the suite was tested with (7.0.0 and later).
 
 ### `scripts/check_configs.py`
 
@@ -961,7 +979,7 @@ It reads `configs/*/` using the standard library and PyYAML.
 | 1b | `init.sh` is byte-identical to `common/init.sh` | `init.sh differs from common/init.sh` |
 | 2 | services include `init`, `privacyfence`, `peek`, `grist`, `grist-provisioner` | `missing service <name>` |
 | 3 | every `image:` matches `^[^$]+:\$\{[A-Z0-9_]+_IMAGE_TAG:\?pin a version in \.env\}$` | `<service> image must use ${<NAME>_IMAGE_TAG:?pin a version in .env}` |
-| 4 | in `.env.example`, every `*_IMAGE_TAG=` value is non-empty and not `latest` | `<VAR> must pin a version` |
+| 4 | in `.env.example`, every `*_IMAGE_TAG=` value is non-empty; only `PRIVACYFENCE_IMAGE_TAG` may be `latest`, every other one must not be | `<VAR> must pin a version` |
 | 5 | every variable referenced as `${VAR` in `compose.yaml` and `templates/*.template`, or as `{$VAR}` in `Caddyfile`, is assigned in `.env.example`, except those with a `:-` default and those preceded by `$$` | `<VAR> is used but not in .env.example` |
 | 5b | every `${VAR}` in `templates/*.template` and every `{$VAR}` in `Caddyfile` is a key of the proxy service's `environment:` | `<VAR> is used by the proxy config but not in its environment` |
 | 6 | every service except `init` has `depends_on.init.condition == service_completed_successfully` | `<service> must depend on init with service_completed_successfully` |
@@ -1106,6 +1124,11 @@ source is `docs/privacyfence-suite-plan-manual-steps.html`.
 - **The scripted single-user sign-in depends on the login form.** The script reads the field names
   from the page. If the flow cannot be followed without JavaScript, the worker stops with
   `status=blocked`, and steps 3 and 6 move to `manual_after` `ma1-localhost`.
+- **`latest` for PrivacyFence can break the suite.** A floating tag moves without a suite change. A
+  PrivacyFence release that drops or renames a setting the suite uses (`PRIVACYFENCE_OIDC_CLIENTS`,
+  `PRIVACYFENCE_PEEK_AUTO_PROVISION`, the auto-provisioning contract with Peek and the provisioner)
+  breaks new installs and the next `pull`. The weekly e2e run against `latest` (see Images) is the
+  early warning, and the README tells operators how to pin `PRIVACYFENCE_IMAGE_TAG` to go back.
 - **An upstream release is missing a feature.** p2 checks each pinned tag (below). If one is
   missing, it stops with `status=blocked`. In particular, if `v7.0.0b1`'s
   `src/privacyfence/web/single_user_auth.py` still says `admin@localhost`, privacyfence/privacyfence#1051 did not make it
@@ -1212,7 +1235,7 @@ manual_after:
     why: Checks the host-nginx design that CI cannot run - the containers reaching the host's nginx on 172.30.87.1 through the firewall, the trusted-proxy address the apps see, websockets (Grist), server-sent events (Peek), MCP streaming (PrivacyFence) and the provisioner's 404
   - id: ma5-release
     title: After the feature PR merges, cut v0.1.0 and install from it with one curl
-    why: Only a real tag on main runs release.yml and publishes assets under releases/latest/download; CI tests the installer over file:// only
+    why: Only a real tag on main runs release.yml and publishes assets under releases/latest/download; CI tests the installer over file:// only. Do this only after PrivacyFence 7.0.0 is released as a full release, because the suite's PrivacyFence tag is latest and latest must already be a 7.x image
 verify_after_merge:
   - python3 -m pip install -q -r requirements-dev.txt && python3 -m pytest tests -q && python3 scripts/check_configs.py
 final_checks:
@@ -1267,9 +1290,12 @@ phases:
       - .github/workflows/ci.yml
       - .github/workflows/e2e-localhost.yml
       - tests/e2e/oidc_signin.py
+      - scripts/check_configs.py
+      - tests/test_check_configs.py
+      - tests/fixtures/**
     brief: |
       Read docs/privacyfence-suite-plan.md: "Services and addresses", "Secrets", "Grist's secrets from files, and waiting for PrivacyFence", "Sign-in wiring", "Admins", "localhost", "CI" and "Risks".
-      1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=7.0.0b1, PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.3, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
+      1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=latest in .env.example (e2e and CI override it with 7.0.0b1, see step 4), PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.3, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. The checks below still target v7.0.0b1 of privacyfence/privacyfence. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
          - privacyfence/privacyfence: get_file_contents at ref v7.0.0b1 of CHANGELOG.md contains PRIVACYFENCE_PEEK_AUTO_PROVISION and PRIVACYFENCE_OIDC_CLIENTS, and of src/privacyfence/web/single_user_auth.py contains email="admin@privacyfence.localhost";
          - privacyfence/peek: get_release_by_tag v0.18.0 exists, and CHANGELOG.md at v0.18.0 contains PEEK_OIDC_ISSUER_URL, PEEK_OIDC_SIGNUP, PEEK_ADMIN_EMAILS and PEEK_PROVISIONING_KEY_FILE;
          - privacyfence/grist-provisioner: get_release_by_tag v0.2.0 exists, and CHANGELOG.md at v0.2.0 contains PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE;
@@ -1283,7 +1309,7 @@ phases:
          - the Grist wrapper verbatim, plus the health checks, depends_on and volumes. No caddy volumes and no pf network.
 
          Add a three-line header comment saying what the folder is and pointing to docs/configurations.md.
-      4. configs/localhost/.env.example: the image tags, each with a one-line comment. configs/localhost/init.sh: copy common/init.sh byte for byte.
+      4. configs/localhost/.env.example: the image tags, each with a one-line comment. PRIVACYFENCE_IMAGE_TAG=latest (Design, "Images": it floats on purpose, the comment says how to pin), the others as in step 1. Change check 4 in scripts/check_configs.py as the table says (only PRIVACYFENCE_IMAGE_TAG may be latest) and add test_check_4 cases for both directions: PRIVACYFENCE_IMAGE_TAG=latest passes, PEEK_IMAGE_TAG=latest fails with the message. In e2e-localhost.yml set PRIVACYFENCE_IMAGE_TAG: 7.0.0b1 in the job env: (latest is 6.13.0 until 7.0.0 is released) with a comment saying when to remove it, and add a `schedule:` weekly cron trigger. The grist-image job is unchanged. configs/localhost/init.sh: copy common/init.sh byte for byte.
       5. tests/e2e/oidc_signin.py, with two subcommands, pf and apps, exactly as e2e steps 3 and 6 describe. Use only the standard library: urllib.request with HTTPCookieProcessor, http.cookiejar.MozillaCookieJar and html.parser.
       6. .github/workflows/e2e-localhost.yml with the steps exactly as listed, and pinned actions as in ci.yml.
       7. Run python3 scripts/check_configs.py; it must print "ok: 1 configurations". Push and read the ci.yml and e2e-localhost.yml runs. Each of these stop conditions means stopping with status=blocked and putting the relevant log lines in the report, never changing upstream behaviour from here:
@@ -1446,7 +1472,7 @@ phases:
            - signing out of Peek or Grist leaves the PrivacyFence session;
          - sign-in notes: caddy-google and nginx-google admit only verified Google Workspace accounts (no personal Gmail) and need outbound HTTPS to oauth.privacyfence.eu; ALLOWED_DOMAIN limits who signs in to all three apps, and PrivacyFence takes it only at its first start (later changes go through its Admin page); with caddy-idp, an IdP that sends no email_verified (for example Entra ID) needs IDP_TRUST_UNVERIFIED_EMAIL=true, which trusts addresses in ALLOWED_DOMAIN;
          - a section "Admins", from the Design's "Admins": PEEK_ADMIN_EMAILS and GRIST_ADMIN_EMAIL are dedicated addresses that are not auto-connected, localhost has no Peek admin, and Grist on localhost is administered by the boot key only;
-         - which PrivacyFence, Peek, Grist and provisioner versions this release pins;
+         - which Peek, Grist and provisioner versions this release pins, and that PrivacyFence follows `latest` (7.0.0 or later) with the pull command and the way to pin it;
          - that Grist comes from PrivacyFence's grist-core fork (open-source build, full-edition switch off, lock-out check on every release), with a link to the fork's pf/README.md; the rootless-Docker note for secrets/idp_client_secret;
          - links to PrivacyFence's docs/org-mode-docker.md, docs/org-mode-setup-guide.md (built-in Google sign-in, relay DNS records) and docs/oidc-provider.md, to Peek's auth docs, and to grist-provisioner's README.
       2. docs/configurations.md: one table per configuration listing every .env variable, its meaning and where it ends up (which container variable), plus a table of the generated values with the volumes and owners of their copies, and for nginx-google the network facts (bridge pf-suite, gateway 172.30.87.1, extra_hosts, trusted proxy).
