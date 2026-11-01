@@ -81,16 +81,15 @@ def _open(opener, url, data=None):
 
 
 def _check_cookies_accepted(resp, jar) -> None:
+    """Every cookie the response sets must be in the jar; a deletion (Max-Age=0) is not a cookie."""
     names = {c.name for c in jar}
-    headers = resp.headers.get_all("Set-Cookie") or []
-    for header in headers:
+    for header in resp.headers.get_all("Set-Cookie") or []:
+        parts = [p.strip().lower() for p in header.split(";")]
+        if "max-age=0" in parts[1:]:
+            continue
         name = header.split("=", 1)[0].strip()
         if name not in names:
-            seen = " | ".join(
-                h.split("=", 1)[0].strip() + ": " + "; ".join(x.strip() for x in h.split(";")[1:])
-                for h in headers
-            )
-            raise Fail(f"cookie refused: {name} (Set-Cookie headers: {seen})")
+            raise Fail(f"cookie refused: {name}")
 
 
 def sign_in_pf() -> None:
