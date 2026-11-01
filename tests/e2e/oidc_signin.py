@@ -85,7 +85,8 @@ def _check_cookies_accepted(resp, jar) -> None:
     for header in resp.headers.get_all("Set-Cookie") or []:
         name = header.split("=", 1)[0].strip()
         if name not in names:
-            raise Fail(f"cookie refused: {name}")
+            attrs = [a.split("=", 1)[0].strip().lower() for a in header.split(";")[1:]]
+            raise Fail(f"cookie refused: {name} (attributes: {', '.join(attrs) or 'none'})")
 
 
 def sign_in_pf() -> None:
