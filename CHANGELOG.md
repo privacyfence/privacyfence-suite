@@ -10,6 +10,14 @@ No image tag changed and no file is dropped; the configurations are the same as 
 
 - `deploy/nginx-host-migration/`: moves a server that runs PrivacyFence from pip (systemd), Peek and Grist as separate containers and the host's nginx into one stack, keeping every app's data. Peek and Grist then sign in through PrivacyFence and the new grist-provisioner gives each person their Grist user and key. The apps keep their `127.0.0.1` ports, so nginx keeps its upstreams. `migrate.sh` runs a read-only preflight (versions, bundle retired, Grist sites and owners, htpasswd names against Grist logins), copies the data with the old services stopped, renders the nginx site and rolls back. It lives in the repository only and is not part of the release archives.
 
+### Changed
+
+- `deploy/hetzner-cloudflare/`: the README clones `main` instead of a feature branch, explains the Tailscale policy a tagged auth key needs for Tailscale SSH, and says that `all` is safe to run again after a failure.
+
+### Fixed
+
+- `deploy/hetzner-cloudflare/bootstrap.sh`: the firewall step no longer exits silently, before enabling ufw, when there are no earlier Cloudflare or SSH rules to replace (the first run).
+
 ## [0.1.2] - 2026-11-01
 
 No image tag changed and no file is dropped; the configurations are the same as in 0.1.1 (PrivacyFence follows `latest`, 7.0.0 or later).
