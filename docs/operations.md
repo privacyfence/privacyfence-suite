@@ -61,14 +61,20 @@ docker compose restart privacyfence  # PrivacyFence reads it once at start
 
 ## Removing a person
 
-PrivacyFence disconnects a person's Peek account and Grist key with its `--peek-release` and `--grist-release` options:
+PrivacyFence disconnects a person's Peek account and Grist key with its `--peek-release` and `--grist-release` options. They take the person's `PRINCIPAL_ID`: the id that the person's Settings page and the audit log show, which is also their folder name under `users/` in PrivacyFence's data volume.
 
 ```sh
-docker compose exec privacyfence privacyfence-app --peek-release <email>
-docker compose exec privacyfence privacyfence-app --grist-release <email>
+docker compose exec privacyfence privacyfence-app --peek-release PRINCIPAL_ID
+docker compose exec privacyfence privacyfence-app --grist-release PRINCIPAL_ID
 ```
 
-Check `docker compose exec privacyfence privacyfence-app --help` for the exact arguments of your PrivacyFence version. To stop the person signing in, remove them from your identity provider or Google Workspace, or change the allowed domain on PrivacyFence's Admin page.
+To find the id from an email address, look for the person's provisioning state; the id is the folder name after `users/`:
+
+```sh
+docker compose exec privacyfence sh -c 'grep -l -F person@example.com /var/lib/privacyfence-org/.privacyfence/users/*/credentials/*_provisioning.json'
+```
+
+The provisioning keys reach the command through the `*_FILE` variables already in the container's environment. To stop the person signing in, remove them from your identity provider or Google Workspace, or change the allowed domain on PrivacyFence's Admin page.
 
 ## Troubleshooting
 
@@ -83,11 +89,17 @@ Check `docker compose exec privacyfence privacyfence-app --help` for the exact a
   - nginx listens only on a public address, not on all addresses (`listen 443 ssl;`, not `listen <ip>:443`), so it does not answer on `172.30.87.1`;
   - nginx is not running or `nginx -t` failed on the site file.
 
-  From the Grist container, which has Node (the image's own health check uses it), test each name:
+  From the Grist container, which has Node (the suite's health check for Grist uses it), test each name:
 
   ```sh
   docker compose exec grist node -e "fetch('https://<PF_HOSTNAME>/oidc/.well-known/openid-configuration').then(r=>console.log(r.status),e=>console.log(e.cause||e))"
   docker compose exec grist node -e "fetch('https://<PEEK_HOSTNAME>/healthz').then(r=>console.log(r.status),e=>console.log(e.cause||e))"
+  ```
+
+  While Grist's wrapper is restarting, `exec` can fail. This form works then; it needs no secrets because `--entrypoint node` skips the wrapper:
+
+  ```sh
+  docker compose run --rm --no-deps --entrypoint node grist -e "fetch('https://<PF_HOSTNAME>/oidc/.well-known/openid-configuration').then(r=>console.log(r.status),e=>console.log(e.cause||e))"
   ```
 
   `200` means the path works; a timeout points at the firewall, a refusal at the listen address, a certificate error at the certificate (it must cover all three names). From outside, `curl -s -o /dev/null -w "%{http_code}" https://<GRIST_HOSTNAME>/api/provisioning/self` must print `404`.
