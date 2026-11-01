@@ -18,7 +18,18 @@ with the proxy on. Cloudflare SSL/TLS mode **Full (strict)** accepts it.
 2. **Cloudflare SSL/TLS mode**: Full (strict). Leave "Always Use HTTPS" on.
 3. **Cloudflare API token**: My Profile → API Tokens → Edit zone DNS template, limited to the `example.com` zone
    (needs Zone:DNS:Edit and Zone:Zone:Read). Used only by certbot.
-4. **Tailscale auth key**: https://login.tailscale.com/admin/settings/keys (one-off, not reusable).
+4. **Tailscale auth key**: https://login.tailscale.com/admin/settings/keys (not reusable, not ephemeral).
+   Tailscale SSH (`--ssh`) must be allowed by your tailnet policy:
+   - *Untagged key:* the VM is your own device, and the default policy already lets you SSH to your own devices. Nothing to change.
+   - *Tagged key* (for example `tag:pf-suite`): the VM belongs to the tag, so the default rule does not match. Add the tag
+     to the policy and tick it when you create the key:
+     ```json
+     "tagOwners": { "tag:pf-suite": ["autogroup:admin"] },
+     "grants": [ { "src": ["you@example.com"], "dst": ["tag:pf-suite"], "ip": ["*"] } ],
+     "ssh": [ { "action": "check", "src": ["you@example.com"], "dst": ["tag:pf-suite"], "users": ["root"] } ]
+     ```
+     (merge these into the existing `tagOwners`, `grants` and `ssh` lists; do not replace them.) With a custom policy that
+     has no `ssh` rule for the VM, SSH over Tailscale is refused, so do not run `lock-ssh` until it works.
 5. **Google Workspace**: nothing to register. `ALLOWED_DOMAIN` must be a Workspace domain whose people can sign in; personal Gmail is refused.
    `ADMIN_EMAILS` and `GRIST_ADMIN_EMAIL` must be real addresses in that domain.
 6. **Hetzner Cloud Firewall** (optional, extra layer): inbound TCP 443 from Cloudflare ranges, TCP 22 until Tailscale works, ICMP.
@@ -29,7 +40,7 @@ On the VM, as root, with SSH keys you already have:
 
 ```sh
 apt-get update && apt-get install -y git
-git clone -b claude/pf-suite-google-idp-cloudflare-h1ppym https://github.com/privacyfence/privacyfence-suite.git /root/pf-src
+git clone https://github.com/privacyfence/privacyfence-suite.git /root/pf-src
 cd /root/pf-src/deploy/hetzner-cloudflare
 install -m 600 pf-deploy.env.example /root/pf-deploy.env
 nano /root/pf-deploy.env
@@ -38,8 +49,10 @@ nano /root/pf-deploy.env
 
 `all` runs: base packages, Tailscale (`--ssh`), Docker, nginx from nginx.org (distro nginx is older than the
 suite's 1.25.1 minimum), the certificate, Cloudflare IP ranges (real client IP + firewall), ufw, then
-downloads suite release 0.1.0 (`SUITE_VERSION`, checksum verified), pins PrivacyFence to 7.0.0 (`PRIVACYFENCE_IMAGE_TAG`), fills `.env`, installs the nginx site and starts the stack
-in `/opt/privacyfence-nginx-google`. Each step can be re-run alone (`./bootstrap.sh cert`, ...).
+downloads the suite release named by `SUITE_VERSION` (checksum verified), pins PrivacyFence to 7.0.0 (`PRIVACYFENCE_IMAGE_TAG`), fills `.env`, installs the nginx site and starts the stack
+in `/opt/privacyfence-nginx-google`. Each step can be re-run alone (`./bootstrap.sh cert`, ...), and `all` is
+safe to run again after you fix a failure (for example a wrong value in `/root/pf-deploy.env`). To get a newer
+version of the scripts, run `git pull` in `/root/pf-src` first.
 
 ## Afterwards
 
@@ -49,7 +62,7 @@ in `/opt/privacyfence-nginx-google`. Each step can be re-run alone (`./bootstrap
    ```
    Add the printed `_privacyfence-relay` TXT records in Cloudflare (TXT records are never proxied).
 2. Open `https://pf.example.com` and sign in with a Workspace admin from `ADMIN_EMAILS`. Peek and Grist appear connected.
-3. **Lock SSH**: from another terminal confirm `ssh root@pf-suite` (Tailscale name/IP) works, then on the VM:
+3. **Lock SSH**: from another terminal confirm `ssh root@<TS_HOSTNAME>` (the Tailscale name from `pf-deploy.env`, or the Tailscale IP) works, then on the VM:
    ```sh
    /root/pf-src/deploy/hetzner-cloudflare/bootstrap.sh lock-ssh
    ```
