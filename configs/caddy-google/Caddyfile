@@ -1,0 +1,23 @@
+{$PF_HOSTNAME} {
+	reverse_proxy privacyfence:8765
+}
+
+{$PEEK_HOSTNAME} {
+	reverse_proxy peek:7700
+}
+
+{$GRIST_HOSTNAME} {
+	@provisioner {
+		path /api/provisioning/*
+		remote_ip 172.30.87.10
+	}
+	handle @provisioner {
+		reverse_proxy grist-provisioner:8485
+	}
+	handle /api/provisioning/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy grist:8484
+	}
+}

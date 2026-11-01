@@ -55,6 +55,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: shellcheck -s sh common/init.sh
 
+  caddy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: caddy validate for every Caddy configuration
+        run: |
+          set -eu
+          for c in caddy-idp caddy-google; do
+            tag=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "configs/$c/.env.example")
+            echo "== $c (caddy:$tag)"
+            docker run --rm \
+              -v "$PWD/configs/$c/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              -e PF_HOSTNAME=pf.example.com -e PEEK_HOSTNAME=peek.example.com -e GRIST_HOSTNAME=grist.example.com \
+              "caddy:$tag" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done
+
   grist-image:
     runs-on: ubuntu-latest
     steps:
