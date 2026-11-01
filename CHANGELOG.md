@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `deploy/nginx-host-migration/`: moves a server that runs PrivacyFence from pip (systemd), Peek and Grist as separate containers and the host's nginx into one stack, keeping every app's data. Peek and Grist then sign in through PrivacyFence and the new grist-provisioner gives each person their Grist user and key. The apps keep their `127.0.0.1` ports, so nginx keeps its upstreams. `migrate.sh` runs a read-only preflight (versions, bundle retired, Grist sites and owners, htpasswd names against Grist logins), copies the data with the old services stopped, renders the nginx site and rolls back. It lives in the repository only and is not part of the release archives.
+
 ## [0.1.2] - 2026-11-01
 
 No image tag changed and no file is dropped; the configurations are the same as in 0.1.1 (PrivacyFence follows `latest`, 7.0.0 or later).

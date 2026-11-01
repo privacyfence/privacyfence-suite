@@ -1,0 +1,108 @@
+# PrivacyFence, Peek and Grist on the host's nginx, after the migration (README.md, step 5).
+# Placeholders: @PF@ @PEEK@ @GRIST@ (host names) and @PF_CERT@ @PF_KEY@ @PEEK_CERT@ @PEEK_KEY@
+# @GRIST_CERT@ @GRIST_KEY@ (certificate chain and key per name; the same pair three times for one
+# SAN or wildcard certificate). migrate.sh nginx renders it from .env and the environment.
+#
+# What changed from a typical pre-suite setup:
+#  - Grist has no basic auth and no X-Forwarded-User: people sign in to Grist through PrivacyFence.
+#  - /api/ on Grist is open: Grist checks the session cookie or API key itself, and the Grist web app
+#    calls /api/ from the browser.
+#  - /api/provisioning/ goes to the new provisioner, for PrivacyFence's container (172.30.87.10) only.
+#  - Upstreams stay on 127.0.0.1; the stack publishes the same ports there.
+#  - TLS 1.2 and 1.3 only.
+#
+# Every `listen` is on all addresses, so nginx also answers the containers on 172.30.87.1
+# (they reach the public names there through extra_hosts).
+
+limit_req_zone $binary_remote_addr zone=pf_oauth:10m rate=30r/m;
+map $http_upgrade $pf_suite_connection_upgrade { default upgrade; '' close; }
+
+server {
+    listen 80;
+    server_name @PF@ @PEEK@ @GRIST@;
+    return 301 https://$host$request_uri;
+}
+
+# PrivacyFence
+server {
+    listen 443 ssl http2;
+    server_name @PF@;
+    ssl_certificate     @PF_CERT@;
+    ssl_certificate_key @PF_KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log /var/log/nginx/@PF@.access.log;
+
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+
+    location ~ ^/(register|authorize|token)$ {
+        limit_req zone=pf_oauth burst=20 nodelay;
+        proxy_pass http://127.0.0.1:8765;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+    }
+}
+
+# Peek
+server {
+    listen 443 ssl http2;
+    server_name @PEEK@;
+    ssl_certificate     @PEEK_CERT@;
+    ssl_certificate_key @PEEK_KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log /var/log/nginx/@PEEK@.access.log;
+
+    client_max_body_size 1G;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+
+    location / {
+        proxy_pass http://127.0.0.1:7700;
+    }
+}
+
+# Grist
+server {
+    listen 443 ssl http2;
+    server_name @GRIST@;
+    ssl_certificate     @GRIST_CERT@;
+    ssl_certificate_key @GRIST_KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log /var/log/nginx/@GRIST@.access.log;
+
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Websockets. These stay at server level: a location that sets any proxy_set_header of its own
+    # inherits none from the server block.
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        $pf_suite_connection_upgrade;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_buffering off;
+
+    location / {
+        proxy_pass http://127.0.0.1:8484;
+    }
+    # The provisioner, for PrivacyFence's container alone; 404 for everyone else.
+    location /api/provisioning/ {
+        if ($remote_addr != 172.30.87.10) {
+            return 404;
+        }
+        proxy_pass http://127.0.0.1:8485;
+    }
+}
