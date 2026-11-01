@@ -54,3 +54,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: shellcheck -s sh common/init.sh
+
+  grist-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The Grist image still has the entrypoint the wrapper relies on
+        run: |
+          set -eu
+          tag=$(sed -n 's/^GRIST_IMAGE_TAG=//p' configs/localhost/.env.example)
+          image=ghcr.io/privacyfence/grist-core:$tag
+          docker pull -q "$image"
+          inspect() { docker image inspect --format "$1" "$image"; }
+          fail=0
+          check() {
+            if [ "$2" != "$3" ]; then echo "$1: got $2, expected $3"; fail=1; fi
+          }
+          check Entrypoint "$(inspect '{{json .Config.Entrypoint}}')" '["./sandbox/docker_entrypoint.sh"]'
+          check Cmd "$(inspect '{{json .Config.Cmd}}')" '["./sandbox/run.sh"]'
+          check WorkingDir "$(inspect '{{.Config.WorkingDir}}')" /grist
+          check uid "$(docker run --rm --entrypoint id "$image" -u grist)" 1001
+          if ! inspect '{{range .Config.Env}}{{println .}}{{end}}' | grep -qx 'GRIST_EXT_FULL_EDITION_BASE_URL='; then
+            echo "Env: GRIST_EXT_FULL_EDITION_BASE_URL= (empty) is missing"
+            fail=1
+          fi
+          exit "$fail"

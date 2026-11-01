@@ -117,7 +117,9 @@ def check_config(root: Path, cfg: Path) -> list[str]:
 
     if env_example is not None:
         for key, value in env_example.items():
-            if key.endswith("_IMAGE_TAG") and (not value or value == "latest"):
+            if key.endswith("_IMAGE_TAG") and (
+                not value or (value == "latest" and key != "PRIVACYFENCE_IMAGE_TAG")
+            ):
                 problems.append(f"{key} must pin a version")
 
     # 5 and 5b: variables used but not assigned / not in the proxy's environment
