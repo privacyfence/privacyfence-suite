@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck -s sh common/init.sh
+      - run: shellcheck -s sh common/init.sh release/install.sh scripts/build_release.sh
 
   caddy:
     runs-on: ubuntu-latest
@@ -120,3 +120,21 @@ jobs:
             fail=1
           fi
           exit "$fail"
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the release assets
+        run: sh scripts/build_release.sh 0.0.0-ci dist
+      - name: Checksums and archive listings
+        run: |
+          set -eu
+          cd dist
+          sha256sum -c SHA256SUMS
+          for z in *.zip; do unzip -l "$z"; done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/
+          retention-days: 7
