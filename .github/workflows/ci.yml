@@ -1,0 +1,140 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests -q
+      - run: python3 scripts/check_configs.py
+      - run: ruff check .
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: docker compose config for every configuration
+        run: |
+          set -eu
+          for dir in configs/*/; do
+            [ -d "$dir" ] || continue
+            echo "== $dir"
+            (
+              cd "$dir"
+              cp .env.example .env
+              for pair in \
+                PF_HOSTNAME=pf.example.com \
+                PEEK_HOSTNAME=peek.example.com \
+                GRIST_HOSTNAME=grist.example.com \
+                ADMIN_EMAILS=admin@example.com \
+                ALLOWED_DOMAIN=example.com \
+                GRIST_ADMIN_EMAIL=grist-admin@example.com \
+                IDP_ISSUER=https://idp.example.com \
+                IDP_CLIENT_ID=ci; do
+                key=${pair%%=*}
+                sed -i "s|^${key}=.*|${pair}|" .env
+              done
+              docker compose config -q
+            )
+          done
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck -s sh common/init.sh release/install.sh scripts/build_release.sh
+
+  caddy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: caddy validate for every Caddy configuration
+        run: |
+          set -eu
+          for c in caddy-idp caddy-google; do
+            tag=$(sed -n 's/^CADDY_IMAGE_TAG=//p' "configs/$c/.env.example")
+            echo "== $c (caddy:$tag)"
+            docker run --rm \
+              -v "$PWD/configs/$c/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              -e PF_HOSTNAME=pf.example.com -e PEEK_HOSTNAME=peek.example.com -e GRIST_HOSTNAME=grist.example.com \
+              "caddy:$tag" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done
+
+  nginx:
+    runs-on: ubuntu-latest
+    env:
+      NGINX_IMAGE: nginx:1.28.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: nginx -t on the shipped example configuration
+        run: |
+          set -eu
+          certs=$(mktemp -d)
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=pf.example.com" \
+            -addext "subjectAltName=DNS:pf.example.com,DNS:peek.example.com,DNS:grist.example.com" \
+            -keyout "$certs/privkey.pem" -out "$certs/fullchain.pem"
+          chmod 644 "$certs"/*.pem
+          chmod 755 "$certs"
+          docker run --rm \
+            -v "$PWD/configs/nginx-google/nginx/privacyfence-suite.conf:/etc/nginx/conf.d/default.conf:ro" \
+            -v "$certs:/etc/ssl/privacyfence-suite:ro" \
+            "$NGINX_IMAGE" nginx -t
+      - name: three HTTPS server blocks and the port-80 block
+        run: |
+          set -eu
+          count=$(grep -c 'server_name' configs/nginx-google/nginx/privacyfence-suite.conf)
+          [ "$count" = 4 ] || { echo "expected 4 server_name lines, got $count"; exit 1; }
+
+  grist-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The Grist image still has the entrypoint the wrapper relies on
+        run: |
+          set -eu
+          tag=$(sed -n 's/^GRIST_IMAGE_TAG=//p' configs/localhost/.env.example)
+          image=ghcr.io/privacyfence/grist-core:$tag
+          docker pull -q "$image"
+          inspect() { docker image inspect --format "$1" "$image"; }
+          fail=0
+          check() {
+            if [ "$2" != "$3" ]; then echo "$1: got $2, expected $3"; fail=1; fi
+          }
+          check Entrypoint "$(inspect '{{json .Config.Entrypoint}}')" '["./sandbox/docker_entrypoint.sh"]'
+          check Cmd "$(inspect '{{json .Config.Cmd}}')" '["./sandbox/run.sh"]'
+          check WorkingDir "$(inspect '{{.Config.WorkingDir}}')" /grist
+          check uid "$(docker run --rm --entrypoint id "$image" -u grist)" 1001
+          if ! inspect '{{range .Config.Env}}{{println .}}{{end}}' | grep -qx 'GRIST_EXT_FULL_EDITION_BASE_URL='; then
+            echo "Env: GRIST_EXT_FULL_EDITION_BASE_URL= (empty) is missing"
+            fail=1
+          fi
+          exit "$fail"
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the release assets
+        run: sh scripts/build_release.sh 0.0.0-ci dist
+      - name: Checksums and archive listings
+        run: |
+          set -eu
+          cd dist
+          sha256sum -c SHA256SUMS
+          for z in *.zip; do unzip -l "$z"; done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/
+          retention-days: 7

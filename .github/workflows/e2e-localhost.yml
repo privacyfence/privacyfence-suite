@@ -1,0 +1,110 @@
+name: e2e-localhost
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # `latest` is PrivacyFence 6.13.0 until 7.0.0 is released; remove this line then.
+      PRIVACYFENCE_IMAGE_TAG: 7.0.0b1
+    defaults:
+      run:
+        working-directory: configs/localhost
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: 1. Start the stack
+        run: |
+          cp .env.example .env
+          docker compose up -d --wait --wait-timeout 300 privacyfence peek grist grist-provisioner
+
+      - name: 2. Services answer
+        run: |
+          set -eu
+          curl -fsS http://127.0.0.1:7700/healthz
+          curl -fsS http://127.0.0.1:8484/status
+          curl -fsS http://127.0.0.1:8765/oidc/.well-known/openid-configuration \
+            | python3 -c 'import json,sys; i=json.load(sys.stdin)["issuer"]; assert i == "http://localhost:8765/oidc", i'
+
+      - name: 3. Sign in to PrivacyFence
+        run: python3 -I ../../tests/e2e/oidc_signin.py pf
+
+      - name: 4. Wait for the Peek and Grist tokens
+        run: |
+          set -eu
+          dir=/var/lib/privacyfence-org/.privacyfence/users/single-user/credentials
+          for i in $(seq 1 36); do
+            if docker compose exec -T privacyfence test -s "$dir/peek_token.json" \
+              && docker compose exec -T privacyfence test -s "$dir/grist_token.json"; then
+              echo "tokens present"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "token files did not appear within 180 s"
+          echo "--- privacyfence provisioning lines"
+          docker compose logs --no-color privacyfence | grep -i -E 'provision|peek|grist' | tail -40 || true
+          echo "--- grist-provisioner lines"
+          docker compose logs --no-color grist-provisioner | tail -40 || true
+          exit 1
+
+      - name: 5. Provisioner check
+        run: |
+          set -eu
+          docker compose exec -T grist-provisioner grist-provisioner check | tee /tmp/check.txt
+          grep -E '^ok: [0-9]+ Grist users, 1 linked$' /tmp/check.txt
+
+      - name: 6. OIDC sign-ins to Grist and Peek
+        run: python3 -I ../../tests/e2e/oidc_signin.py apps
+
+      - name: 7. Peek skipped first-run setup
+        run: docker compose logs --no-color peek | grep -i 'first-run setup is skipped'
+
+      - name: 8. No secret in the logs
+        run: |
+          set -eu
+          docker compose logs --no-color > /tmp/all.log 2>&1
+          status=0
+          for vol in pf peek grist provisioner; do
+            for name in $(docker compose run --rm --no-deps -T --entrypoint ls init -A "/out/$vol"); do
+              value=$(docker compose run --rm --no-deps -T --entrypoint cat init "/out/$vol/$name")
+              [ -n "$value" ] || continue
+              echo "::add-mask::$value"
+              if grep -qF -- "$value" /tmp/all.log; then
+                echo "secret $name appears in the logs"
+                status=1
+              fi
+            done
+          done
+          exit "$status"
+
+      - name: 9. Restart keeps the secrets
+        run: |
+          set -eu
+          docker compose down
+          docker compose up -d --wait --wait-timeout 300 privacyfence peek grist grist-provisioner
+          if docker compose logs --no-color init | grep -q 'init: generated'; then
+            echo "init generated a secret on the second start"
+            exit 1
+          fi
+          docker compose exec -T grist-provisioner grist-provisioner check | tee /tmp/check.txt
+          grep -E '^ok: [0-9]+ Grist users, 1 linked$' /tmp/check.txt
+
+      - name: 10. Diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
