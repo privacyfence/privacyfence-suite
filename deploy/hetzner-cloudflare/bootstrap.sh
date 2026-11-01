@@ -88,7 +88,7 @@ step_cf_refresh() {
 
 apply_cf_ufw() {
   # replace previous Cloudflare rules (tagged with a comment) with the current list
-  ufw status numbered | grep 'pf-cf-443' | sed -E 's/^\[ *([0-9]+)\].*/\1/' | sort -rn | while read -r n; do
+  ufw status numbered | { grep 'pf-cf-443' || true; } | sed -E 's/^\[ *([0-9]+)\].*/\1/' | sort -rn | while read -r n; do
     ufw --force delete "$n" >/dev/null
   done
   while read -r r; do ufw allow proto tcp from "$r" to any port 443 comment pf-cf-443 >/dev/null; done < /etc/pf-cloudflare-ranges
@@ -157,7 +157,7 @@ step_lock_ssh() {
   tailscale status >/dev/null 2>&1 || die "tailscale is not up; refusing to lock out SSH"
   log "removing public SSH (port 22). Make sure 'ssh root@$(tailscale ip -4 | head -1)' works from another terminal first."
   read -r -p "Verified SSH over Tailscale? type yes: " a; [ "$a" = yes ] || die aborted
-  ufw status numbered | grep 'ssh-until-lock' | sed -E 's/^\[ *([0-9]+)\].*/\1/' | sort -rn | while read -r n; do
+  ufw status numbered | { grep 'ssh-until-lock' || true; } | sed -E 's/^\[ *([0-9]+)\].*/\1/' | sort -rn | while read -r n; do
     ufw --force delete "$n" >/dev/null
   done
   ufw status
