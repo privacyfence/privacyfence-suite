@@ -78,7 +78,7 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
   | privacyfence/privacyfence | `v7.0.0b1`, a GitHub **pre-release** | `PRIVACYFENCE_IMAGE_TAG=latest` (**floating, by decision**: see [Images](#services-and-addresses-all-configurations)). `7.0.0b1` is only what e2e and CI run against until 7.0.0 is released; `latest` does not move to a pre-release |
   | privacyfence/peek | `v0.18.0` | `PEEK_IMAGE_TAG=0.18.0` |
   | privacyfence/grist-provisioner | `v0.2.0` | `GRIST_PROVISIONER_IMAGE_TAG=0.2.0` |
-  | privacyfence/grist-core (the fork) | `v1.7.22-pf.3`, published 2026-11-01 | `GRIST_IMAGE_TAG=1.7.22-pf.3` |
+  | privacyfence/grist-core (the fork) | `v1.7.22-pf.4`, published 2026-11-01 | `GRIST_IMAGE_TAG=1.7.22-pf.4` |
 
   - 7.0.0b1 must include [privacyfence/privacyfence#1051](https://github.com/privacyfence/privacyfence/pull/1051).
     It makes the single-user person `admin@privacyfence.localhost` instead of `admin@localhost`.
@@ -204,10 +204,10 @@ PrivacyFence uses upstream reaches Peek and Grist as the same identity.
     - the free plan's limits.
 
     A Grist release that gates any of them is not released by the fork.
-  - The current release is `1.7.22-pf.3`, built from upstream `v1.7.22`. `1.7.22-pf.2` crashed on a
+  - The current release is `1.7.22-pf.4`, built from upstream `v1.7.22`. `1.7.22-pf.2` crashed on a
     fresh volume with `GRIST_PERSONAL_ORGS=false` or `GRIST_ORG_CREATION_ANYONE=false` ("No example
-    workspace available"); `pf.3` fixes that and its lock-out check now runs those settings on a fresh
-    volume and after a restart. Do not use `pf.2`.
+    workspace available"); `pf.3` fixed that, and `pf.4` also stops Grist writing the boot key to its logs (banner and
+    settings dump), which the suite's no-secret-in-the-logs check needs. Do not use `pf.2` or `pf.3`.
   - The upstream Dockerfile has `WORKDIR /grist`, `ENTRYPOINT ["./sandbox/docker_entrypoint.sh"]`
     and `CMD ["./sandbox/run.sh"]`. The final stage is `node:22-trixie-slim`, which has `/bin/sh`
     and Node 22's global `fetch`. The `grist-image` CI job confirms these against the pinned tag.
@@ -287,7 +287,7 @@ __pycache__/
   - `PRIVACYFENCE_IMAGE_TAG=latest`, with a comment saying it floats on purpose and how to pin
     (for example `7.0.0`) to hold back an update
   - `PEEK_IMAGE_TAG=0.18.0`
-  - `GRIST_IMAGE_TAG=1.7.22-pf.3`
+  - `GRIST_IMAGE_TAG=1.7.22-pf.4`
   - `GRIST_PROVISIONER_IMAGE_TAG=0.2.0`
   - `ALPINE_IMAGE_TAG=3.22` (a minor series, which is enough for a busybox script)
   - `CADDY_IMAGE_TAG=2.10.2` (Caddy configurations only)
@@ -1095,7 +1095,7 @@ The steps are in the [step-by-step page](https://claude.ai/artifact/S4o9VWjyncbx
 source is `docs/privacyfence-suite-plan-manual-steps.html`.
 
 - **Before:**
-  - `mb2-upstream-releases`: Peek 0.18.0, grist-provisioner 0.2.0 and grist-core 1.7.22-pf.3 are
+  - `mb2-upstream-releases`: Peek 0.18.0, grist-provisioner 0.2.0 and grist-core 1.7.22-pf.4 are
     released. What is left is to merge [privacyfence/privacyfence#1051](https://github.com/privacyfence/privacyfence/pull/1051),
     release PrivacyFence 7.0.0b1, and check that all four images pull anonymously. The repository
     and its access, formerly `mb1`, are done.
@@ -1218,8 +1218,8 @@ manual_steps_source: docs/privacyfence-suite-plan-manual-steps.html
 manual_before:
   - id: mb2-upstream-releases
     title: Merge privacyfence/privacyfence#1051 and release PrivacyFence 7.0.0b1; check that all four pinned images are public
-    why: p2 to p4 pin privacyfence-org 7.0.0b1, peek 0.18.0, grist-core 1.7.22-pf.3 and grist-provisioner 0.2.0 in .env.example, and e2e-localhost.yml pulls them; without b1 (and #1051 in it) every container check fails, and Grist provisioning of the single-user person fails
-    done_when: The tag v7.0.0b1 exists on privacyfence/privacyfence and its src/privacyfence/web/single_user_auth.py has email="admin@privacyfence.localhost"; and docker pull of ghcr.io/privacyfence/privacyfence-org:7.0.0b1, ghcr.io/privacyfence/peek:0.18.0, ghcr.io/privacyfence/grist-core:1.7.22-pf.3 and ghcr.io/privacyfence/grist-provisioner:0.2.0 each works without signing in
+    why: p2 to p4 pin privacyfence-org 7.0.0b1, peek 0.18.0, grist-core 1.7.22-pf.4 and grist-provisioner 0.2.0 in .env.example, and e2e-localhost.yml pulls them; without b1 (and #1051 in it) every container check fails, and Grist provisioning of the single-user person fails
+    done_when: The tag v7.0.0b1 exists on privacyfence/privacyfence and its src/privacyfence/web/single_user_auth.py has email="admin@privacyfence.localhost"; and docker pull of ghcr.io/privacyfence/privacyfence-org:7.0.0b1, ghcr.io/privacyfence/peek:0.18.0, ghcr.io/privacyfence/grist-core:1.7.22-pf.4 and ghcr.io/privacyfence/grist-provisioner:0.2.0 each works without signing in
 manual_after:
   - id: ma1-localhost
     title: Run configs/localhost on your own computer and use all three apps
@@ -1277,10 +1277,9 @@ phases:
       - python3 scripts/check_configs.py prints "ok: 0 configurations"
       - shellcheck is green in the ci.yml run on the pushed branch, and the whole run is green
 
-  # status: blocked at 72a77f3 on feature/privacyfence-suite--p2-localhost: grist-core 1.7.22-pf.2 exited at first start with
-  # "No example workspace available" (GRIST_PERSONAL_ORGS=false on a fresh volume). Fixed in grist-core 1.7.22-pf.3
-  # (the support user always gets its own hidden org); the Design's Grist settings stay unchanged. Resume: merge the
-  # feature branch into the phase branch and use pf.3 as the brief says.
+  # status: blocked at 412623f on feature/privacyfence-suite--p2-localhost. pf.2 crashed on a fresh volume (fixed in pf.3), and
+  # pf.3 printed the Grist boot key in its logs, failing e2e step 8 (fixed in pf.4). Resume: merge the feature branch into the
+  # phase branch, use pf.4 and PRIVACYFENCE_IMAGE_TAG=latest as the brief says.
   - id: p2-localhost
     title: The localhost configuration, the Grist image check and the end-to-end workflow
     depends_on: [p1-skeleton]
@@ -1295,11 +1294,11 @@ phases:
       - tests/fixtures/**
     brief: |
       Read docs/privacyfence-suite-plan.md: "Services and addresses", "Secrets", "Grist's secrets from files, and waiting for PrivacyFence", "Sign-in wiring", "Admins", "localhost", "CI" and "Risks".
-      1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=latest in .env.example (e2e and CI override it with 7.0.0b1, see step 4), PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.3, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. The checks below still target v7.0.0b1 of privacyfence/privacyfence. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
+      1. Versions are fixed: PRIVACYFENCE_IMAGE_TAG=latest in .env.example (e2e and CI override it with 7.0.0b1, see step 4), PEEK_IMAGE_TAG=0.18.0, GRIST_IMAGE_TAG=1.7.22-pf.4, GRIST_PROVISIONER_IMAGE_TAG=0.2.0, ALPINE_IMAGE_TAG=3.22. The checks below still target v7.0.0b1 of privacyfence/privacyfence. Do not use get_latest_release: it skips pre-releases, and 7.0.0b1 is one. Check each with the GitHub MCP tools:
          - privacyfence/privacyfence: get_file_contents at ref v7.0.0b1 of CHANGELOG.md contains PRIVACYFENCE_PEEK_AUTO_PROVISION and PRIVACYFENCE_OIDC_CLIENTS, and of src/privacyfence/web/single_user_auth.py contains email="admin@privacyfence.localhost";
          - privacyfence/peek: get_release_by_tag v0.18.0 exists, and CHANGELOG.md at v0.18.0 contains PEEK_OIDC_ISSUER_URL, PEEK_OIDC_SIGNUP, PEEK_ADMIN_EMAILS and PEEK_PROVISIONING_KEY_FILE;
          - privacyfence/grist-provisioner: get_release_by_tag v0.2.0 exists, and CHANGELOG.md at v0.2.0 contains PROVISIONER_KEY_FILE and PROVISIONER_GRIST_BOOT_KEY_FILE;
-         - privacyfence/grist-core: get_release_by_tag v1.7.22-pf.3 exists.
+         - privacyfence/grist-core: get_release_by_tag v1.7.22-pf.4 exists.
          Stop condition: if any check fails, stop with status=blocked naming it.
       2. Add the grist-image job to ci.yml as designed: it compares the image's Entrypoint with ["./sandbox/docker_entrypoint.sh"], its Cmd with ["./sandbox/run.sh"] and its WorkingDir with /grist, and checks the uid and the empty GRIST_EXT_FULL_EDITION_BASE_URL. The wrapper in compose.yaml uses those values verbatim (Design, "Grist's secrets from files"). Stop condition: see Risks (Grist image).
       3. configs/localhost/compose.yaml: `name: privacyfence-localhost`, with the services as specified:
