@@ -13,20 +13,26 @@ TLS and forwards to the stack's fixed addresses on the `pf-suite` bridge (`172.3
 
 ## Install and reload
 
-After `.env` is filled in, run in the `nginx-google` folder:
+After `.env` is filled in, run in the `nginx-google` folder. Set `PF_SSL_CERT` and `PF_SSL_KEY` to
+your certificate chain and private key first, so that `nginx -t` finds them (the example file
+expects `/etc/ssl/privacyfence-suite/fullchain.pem` and `privkey.pem`):
 
 ```sh
+PF_SSL_CERT=/etc/ssl/privacyfence-suite/fullchain.pem
+PF_SSL_KEY=/etc/ssl/privacyfence-suite/privkey.pem
 . ./.env && sed -e "s/pf\.example\.com/$PF_HOSTNAME/g" \
   -e "s/peek\.example\.com/$PEEK_HOSTNAME/g" -e "s/grist\.example\.com/$GRIST_HOSTNAME/g" \
+  -e "s|/etc/ssl/privacyfence-suite/fullchain\.pem|$PF_SSL_CERT|g" \
+  -e "s|/etc/ssl/privacyfence-suite/privkey\.pem|$PF_SSL_KEY|g" \
   nginx/privacyfence-suite.conf | sudo tee /etc/nginx/conf.d/privacyfence-suite.conf >/dev/null
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ## Certificate paths
 
-Edit `ssl_certificate` and `ssl_certificate_key` in each of the three `443` server blocks of
-`/etc/nginx/conf.d/privacyfence-suite.conf` (shipped as `/etc/ssl/privacyfence-suite/fullchain.pem`
-and `privkey.pem`), then reload nginx.
+The render command above writes `PF_SSL_CERT` and `PF_SSL_KEY` into `ssl_certificate` and
+`ssl_certificate_key` of each of the three `443` server blocks of
+`/etc/nginx/conf.d/privacyfence-suite.conf`. To change them later, edit those six lines and reload nginx.
 
 ## Firewall
 

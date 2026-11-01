@@ -5,17 +5,16 @@ on:
     tags: ['v[0-9]*']
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: The tag is on main
         run: |
@@ -47,6 +46,30 @@ jobs:
       - run: pytest tests -q
       - run: python3 scripts/check_configs.py
       - run: ruff check .
+
+  publish:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The release notes from the CHANGELOG
+        run: |
+          set -eu
+          version=${GITHUB_REF_NAME#v}
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md
 
       - name: Build the assets
         run: sh scripts/build_release.sh "${GITHUB_REF_NAME#v}" dist

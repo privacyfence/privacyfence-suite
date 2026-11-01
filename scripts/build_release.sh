@@ -3,7 +3,7 @@
 #   privacyfence-suite-<config>.tar.gz and .zip for every folder under configs/,
 #   install.sh (stamped with the version and the configuration list), and SHA256SUMS.
 # Usage: scripts/build_release.sh <version> [outdir]
-# The archives are reproducible; SOURCE_DATE_EPOCH defaults to the commit time.
+# The files come from HEAD (git), not the working tree. The archives are reproducible; SOURCE_DATE_EPOCH defaults to the commit time.
 set -eu
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then
@@ -59,18 +59,20 @@ for config in $configs; do
     top=privacyfence-$config
     stage=$work/$top
     mkdir -p "$stage"
-    files=$(git ls-files "configs/$config")
-    if [ -z "$files" ]; then
+    # Export from the commit, never from the working tree, so a local edit cannot reach an archive.
+    entries=$(git ls-tree -r HEAD -- "configs/$config/" | awk '{ m = $1; $1 = $2 = $3 = ""; sub(/^ +/, ""); print m "\t" $0 }')
+    if [ -z "$entries" ]; then
         echo "build_release: no tracked files in configs/$config" >&2
         exit 1
     fi
-    for file in $files; do
+    printf '%s\n' "$entries" | while IFS="$(printf '\t')" read -r mode file; do
         rel=${file#"configs/$config/"}
         mkdir -p "$stage/$(dirname "$rel")"
-        cp "$file" "$stage/$rel"
-        if [ -x "$file" ]; then chmod 755 "$stage/$rel"; else chmod 644 "$stage/$rel"; fi
+        git show "HEAD:$file" >"$stage/$rel"
+        if [ "$mode" = 100755 ]; then chmod 755 "$stage/$rel"; else chmod 644 "$stage/$rel"; fi
     done
-    cp README.md LICENSE "$stage/"
+    git show HEAD:README.md >"$stage/README.md"
+    git show HEAD:LICENSE >"$stage/LICENSE"
     chmod 644 "$stage/README.md" "$stage/LICENSE"
     printf '%s\n' "$version" >"$stage/VERSION"
     chmod 644 "$stage/VERSION"
