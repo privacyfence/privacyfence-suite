@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-01
+
+No image tag changed and no file is dropped; the configurations are the same as in 0.1.0 (PrivacyFence follows `latest`, 7.0.0 or later).
+
+### Added
+
+- `deploy/hetzner-cloudflare/`: a bootstrap for a fresh Ubuntu or Debian VM that runs `nginx-google` behind the Cloudflare proxy with SSH over Tailscale only (Docker, nginx from nginx.org, a Let's Encrypt certificate through the Cloudflare DNS-01 challenge, real client IPs from Cloudflare, ufw, then the suite). It lives in the repository only and is not part of the release archives.
+
 ## [0.1.0] - 2026-11-01
 
 First release.
