@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-01
+
+No image tag changed and no file is dropped; the configurations are the same as in 0.1.1 (PrivacyFence follows `latest`, 7.0.0 or later).
+
+### Changed
+
+- `deploy/hetzner-cloudflare/`: the README and `pf-deploy.env.example` use `example.com` as the placeholder domain.
+
 ## [0.1.1] - 2026-11-01
 
 No image tag changed and no file is dropped; the configurations are the same as in 0.1.0 (PrivacyFence follows `latest`, 7.0.0 or later).
