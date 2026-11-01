@@ -6,3 +6,4 @@ configs/*/secrets/*
 configs/*/certs/*.pem
 __pycache__/
 .pytest_cache/
+dist/

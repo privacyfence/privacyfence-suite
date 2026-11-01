@@ -10,18 +10,26 @@ import yaml
 REQUIRED_SERVICES = ["init", "privacyfence", "peek", "grist", "grist-provisioner"]
 HARDENED = ["privacyfence", "peek", "grist-provisioner"]
 SAME_IMAGE = ["privacyfence", "peek", "grist", "grist-provisioner"]
-PROXIES = ["caddy", "nginx"]
+PROXIES = ["caddy"]
 SECRET_VOLUMES = {
     "pf-secrets": "privacyfence",
     "peek-secrets": "peek",
     "grist-secrets": "grist",
     "provisioner-secrets": "grist-provisioner",
 }
+GATEWAY = "172.30.87.1"
+SERVICE_PORTS = {
+    "privacyfence": 8765,
+    "peek": 7700,
+    "grist": 8484,
+    "grist-provisioner": 8485,
+}
 HOSTNAME_VARS = ["PF_HOSTNAME", "PEEK_HOSTNAME", "GRIST_HOSTNAME"]
 IMAGE_RE = re.compile(r"^[^$]+:\$\{[A-Z0-9_]+_IMAGE_TAG:\?pin a version in \.env\}$")
 SECRET_KEY_RE = re.compile(r"(?i)(secret|password|_key)$")
 COMPOSE_VAR_RE = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(:-)?")
 TEMPLATE_BRACED_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+PROXY_PASS_RE = re.compile(r"\bproxy_pass\s+([^\s;]+)\s*;")
 CADDY_VAR_RE = re.compile(r"\{\$([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -88,6 +96,71 @@ def check_template_locations(path: Path, rel: str) -> list[str]:
     return problems
 
 
+def nginx_confs(cfg: Path) -> list[Path]:
+    return sorted((cfg / "nginx").glob("*.conf")) if (cfg / "nginx").is_dir() else []
+
+
+def service_address(service: dict) -> str | None:
+    for network in proxy_networks(service):
+        if network.get("ipv4_address"):
+            return str(network["ipv4_address"])
+    return None
+
+
+def check_host_proxy(cfg: Path, compose: dict, services: dict, confs: list[Path]) -> list[str]:
+    problems = []
+    for name, svc in services.items():
+        if svc.get("ports"):
+            problems.append(
+                f"{name} must not publish ports; the host's nginx connects to the fixed addresses"
+            )
+
+    networks = compose.get("networks") or {}
+    ipam = ((networks.get("pf") or {}).get("ipam") or {}).get("config") or [{}]
+    if str((ipam[0] or {}).get("gateway")) != GATEWAY:
+        problems.append("the pf network gateway must be 172.30.87.1")
+    pf_env = (services.get("privacyfence") or {}).get("environment")
+    if not isinstance(pf_env, dict) or str(pf_env.get("PRIVACYFENCE_TRUSTED_PROXIES")) != GATEWAY:
+        problems.append("PRIVACYFENCE_TRUSTED_PROXIES must be the pf gateway")
+    peek_env = (services.get("peek") or {}).get("environment")
+    if not isinstance(peek_env, dict) or str(peek_env.get("PEEK_TRUSTED_PROXY_CIDRS")) != GATEWAY + "/32":
+        problems.append("PEEK_TRUSTED_PROXY_CIDRS must be the pf gateway")
+
+    for name in ("privacyfence", "peek", "grist"):
+        hosts = [str(h) for h in (services.get(name) or {}).get("extra_hosts") or []]
+        ok = all(
+            any(h.startswith("${" + var + ":?") and h.endswith(":" + GATEWAY) for h in hosts)
+            for var in HOSTNAME_VARS
+        )
+        if not ok:
+            problems.append(f"{name} extra_hosts must map the three hostnames to {GATEWAY}")
+
+    targets = {}
+    for name, port in SERVICE_PORTS.items():
+        address = service_address(services.get(name) or {})
+        if address:
+            targets[f"http://{address}:{port}"] = name
+    guard = None
+    pf_address = service_address(services.get("privacyfence") or {})
+    if pf_address:
+        guard = f"$remote_addr != {pf_address}"
+    guarded = False
+    for conf in confs:
+        rel = str(conf.relative_to(cfg))
+        for number, raw in enumerate(conf.read_text().splitlines(), start=1):
+            line = raw.split("#", 1)[0]
+            if guard and guard in line:
+                guarded = True
+            for match in PROXY_PASS_RE.finditer(line):
+                if match.group(1) not in targets:
+                    problems.append(
+                        f"proxy_pass {match.group(1)} in {rel}:{number} is not a service's fixed address"
+                    )
+    if not guarded:
+        problems.append("nginx config must limit /api/provisioning/ to privacyfence")
+    return problems
+
+
 def check_config(root: Path, cfg: Path) -> list[str]:
     problems = []
     for name in ("compose.yaml", ".env.example", "init.sh"):
@@ -106,6 +179,7 @@ def check_config(root: Path, cfg: Path) -> list[str]:
     env_example = read_env_example(cfg / ".env.example") if (cfg / ".env.example").is_file() else None
     proxy = find_proxy(services)
 
+    confs = nginx_confs(cfg)
     for name in REQUIRED_SERVICES:
         if name not in services:
             problems.append(f"missing service {name}")
@@ -202,8 +276,15 @@ def check_config(root: Path, cfg: Path) -> list[str]:
             if source in SECRET_VOLUMES and SECRET_VOLUMES[source] != name:
                 problems.append(f"{name} mounts {source}")
 
+    if "nginx" in services:
+        problems.append("nginx runs on the host; remove the nginx service")
+    if confs:
+        problems += check_host_proxy(cfg, compose, services, confs)
+
     for template in templates:
         problems += check_template_locations(template, str(template.relative_to(cfg)))
+    for conf in confs:
+        problems += check_template_locations(conf, str(conf.relative_to(cfg)))
     return problems
 
 

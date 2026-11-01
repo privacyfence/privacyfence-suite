@@ -1,0 +1,108 @@
+name: fixture-hostproxy
+services:
+  init:
+    image: alpine:${ALPINE_IMAGE_TAG:?pin a version in .env}
+    network_mode: none
+    command:
+    - /bin/sh
+    - /init.sh
+    volumes:
+    - ./init.sh:/init.sh:ro
+    - pf-secrets:/out/pf
+    - peek-secrets:/out/peek
+    - grist-secrets:/out/grist
+    - provisioner-secrets:/out/provisioner
+  privacyfence:
+    image: ghcr.io/privacyfence/privacyfence-org:${PRIVACYFENCE_IMAGE_TAG:?pin a version
+      in .env}
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.1
+      PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
+      PRIVACYFENCE_PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
+    volumes:
+    - pf-secrets:/run/suite:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      pf:
+        ipv4_address: 172.30.87.10
+    extra_hosts:
+    - ${PF_HOSTNAME:?set PF_HOSTNAME in .env}:172.30.87.1
+    - ${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}:172.30.87.1
+    - ${GRIST_HOSTNAME:?set GRIST_HOSTNAME in .env}:172.30.87.1
+  peek:
+    image: ghcr.io/privacyfence/peek:${PEEK_IMAGE_TAG:?pin a version in .env}
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
+      PEEK_TRUSTED_PROXY_CIDRS: 172.30.87.1/32
+    volumes:
+    - peek-secrets:/run/suite:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      pf:
+        ipv4_address: 172.30.87.11
+    extra_hosts:
+    - ${PF_HOSTNAME:?set PF_HOSTNAME in .env}:172.30.87.1
+    - ${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}:172.30.87.1
+    - ${GRIST_HOSTNAME:?set GRIST_HOSTNAME in .env}:172.30.87.1
+  grist:
+    image: ghcr.io/privacyfence/grist-core:${GRIST_IMAGE_TAG:?pin a version in .env}
+    environment:
+      GRIST_SINGLE_ORG: ${GRIST_TEAM_SITE:-team}
+    volumes:
+    - grist-secrets:/run/suite:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      pf:
+        ipv4_address: 172.30.87.12
+    extra_hosts:
+    - ${PF_HOSTNAME:?set PF_HOSTNAME in .env}:172.30.87.1
+    - ${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}:172.30.87.1
+    - ${GRIST_HOSTNAME:?set GRIST_HOSTNAME in .env}:172.30.87.1
+  grist-provisioner:
+    image: ghcr.io/privacyfence/grist-provisioner:${GRIST_PROVISIONER_IMAGE_TAG:?pin
+      a version in .env}
+    read_only: true
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    environment:
+      PROVISIONER_KEY_FILE: /run/suite/grist_provisioning_key
+    volumes:
+    - provisioner-secrets:/run/suite:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    networks:
+      pf:
+        ipv4_address: 172.30.87.13
+networks:
+  pf:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: pf-suite
+    ipam:
+      config:
+      - subnet: 172.30.87.0/24
+        gateway: 172.30.87.1
+volumes:
+  pf-secrets: null
+  peek-secrets: null
+  grist-secrets: null
+  provisioner-secrets: null
