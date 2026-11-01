@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -12,6 +14,9 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # `latest` is PrivacyFence 6.13.0 until 7.0.0 is released; remove this line then.
+      PRIVACYFENCE_IMAGE_TAG: 7.0.0b1
     defaults:
       run:
         working-directory: configs/localhost

@@ -85,6 +85,19 @@ def test_check_4(tmp_path, capsys, value):
     assert_fails(tree, capsys, "a: PEEK_IMAGE_TAG must pin a version")
 
 
+def test_check_4_privacyfence_may_float(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    replace_in(tree / "configs/a/.env.example", "PRIVACYFENCE_IMAGE_TAG=7.0.0b1", "PRIVACYFENCE_IMAGE_TAG=latest")
+    assert check_configs.main(tree) == 0
+    assert "ok: 1 configurations" in capsys.readouterr().out
+
+
+def test_check_4_empty_privacyfence_fails(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    replace_in(tree / "configs/a/.env.example", "PRIVACYFENCE_IMAGE_TAG=7.0.0b1", "PRIVACYFENCE_IMAGE_TAG=")
+    assert_fails(tree, capsys, "a: PRIVACYFENCE_IMAGE_TAG must pin a version")
+
+
 def test_check_5(tmp_path, capsys):
     tree = make_tree(tmp_path)
     replace_in(tree / "configs/a/.env.example", "ALLOWED_DOMAIN=example.com\n", "")
