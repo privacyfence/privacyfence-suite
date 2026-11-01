@@ -145,12 +145,12 @@ docker compose pull privacyfence && docker compose up -d
 
 To hold an update back, set `PRIVACYFENCE_IMAGE_TAG` in `.env` to an exact version, for example `7.0.0`.
 
-Grist comes from PrivacyFence's [grist-core fork](https://github.com/privacyfence/grist-core/blob/main/pf/README.md): the open-source build with the full-edition switch off, and a check on every release that OIDC sign-in, API keys, the boot key, the team-site access API and the free plan's limits are not locked out.
+Grist comes from PrivacyFence's [grist-core fork](https://github.com/privacyfence/grist-core/blob/v1.7.22-pf.4/pf/README.md): the open-source build with the full-edition switch off, and a check on every release that OIDC sign-in, API keys, the boot key, the team-site access API and the free plan's limits are not locked out.
 
 ## More documentation
 
 - PrivacyFence: [Docker deployment](https://github.com/privacyfence/privacyfence/blob/main/docs/org-mode-docker.md), [setup guide](https://github.com/privacyfence/privacyfence/blob/main/docs/org-mode-setup-guide.md) (built-in Google sign-in, relay DNS records) and [OIDC provider](https://github.com/privacyfence/privacyfence/blob/main/docs/oidc-provider.md).
-- [Peek's authentication docs](https://github.com/privacyfence/peek/tree/main/docs).
+- [Peek's authentication docs](https://github.com/privacyfence/peek/blob/main/docs/src/content/docs/auth-access.md).
 - [grist-provisioner](https://github.com/privacyfence/grist-provisioner#readme).
 - This repository: [configurations](https://github.com/privacyfence/privacyfence-suite/blob/main/docs/configurations.md), [operations](https://github.com/privacyfence/privacyfence-suite/blob/main/docs/operations.md), [releasing](https://github.com/privacyfence/privacyfence-suite/blob/main/docs/releasing.md), [changelog](https://github.com/privacyfence/privacyfence-suite/blob/main/CHANGELOG.md).
 
