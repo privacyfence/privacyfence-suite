@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Consistency checks for configs/*/ (see docs/privacyfence-suite-plan.md, "scripts/check_configs.py")."""
+"""Consistency checks for configs/*/."""
 
 import re
 import sys
