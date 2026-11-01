@@ -45,6 +45,25 @@ def test_asset_list(dist):
     assert {p.name for p in dist.iterdir()} == expected
 
 
+def test_archives_come_from_git_not_the_working_tree(dist, tmp_path):
+    """A local edit to a tracked file must not reach an archive (the build exports HEAD)."""
+    readme = ROOT / "README.md"
+    original = readme.read_bytes()
+    out = tmp_path / "dist"
+    try:
+        readme.write_bytes(original + b"\nLOCAL EDIT NOT COMMITTED\n")
+        build(out)
+    finally:
+        readme.write_bytes(original)
+    with tarfile.open(out / "privacyfence-suite-localhost.tar.gz") as tar:
+        member = tar.extractfile("privacyfence-localhost/README.md")
+        assert member is not None
+        assert b"LOCAL EDIT NOT COMMITTED" not in member.read()
+    assert (out / "privacyfence-suite-localhost.tar.gz").read_bytes() == (
+        dist / "privacyfence-suite-localhost.tar.gz"
+    ).read_bytes()
+
+
 def test_checksums(dist):
     result = run(["sha256sum", "-c", "SHA256SUMS"], cwd=dist)
     assert result.returncode == 0, result.stdout + result.stderr

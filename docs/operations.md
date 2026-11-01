@@ -61,7 +61,9 @@ docker compose restart privacyfence  # PrivacyFence reads it once at start
 
 ## Removing a person
 
-PrivacyFence disconnects a person's Peek account and Grist key with its `--peek-release` and `--grist-release` options. They take the person's `PRINCIPAL_ID`: the id that the person's Settings page and the audit log show, which is also their folder name under `users/` in PrivacyFence's data volume.
+First remove the person from your identity provider or Google Workspace (or change the allowed domain on PrivacyFence's Admin page), because anyone who can still sign in is provisioned again.
+
+Then disconnect the person's Peek account and Grist key with PrivacyFence's `--peek-release` and `--grist-release` options. They take the person's `PRINCIPAL_ID`: the id that is their folder name under `users/` in PrivacyFence's data volume.
 
 ```sh
 docker compose exec privacyfence privacyfence-app --peek-release PRINCIPAL_ID
@@ -74,7 +76,7 @@ To find the id from an email address, look for the person's provisioning state; 
 docker compose exec privacyfence sh -c 'grep -l -F person@example.com /var/lib/privacyfence-org/.privacyfence/users/*/credentials/*_provisioning.json'
 ```
 
-The provisioning keys reach the command through the `*_FILE` variables already in the container's environment. To stop the person signing in, remove them from your identity provider or Google Workspace, or change the allowed domain on PrivacyFence's Admin page.
+The provisioning keys reach the command through the `*_FILE` variables already in the container's environment.
 
 ## Troubleshooting
 
@@ -101,6 +103,8 @@ The provisioning keys reach the command through the `*_FILE` variables already i
   ```sh
   docker compose run --rm --no-deps --entrypoint node grist -e "fetch('https://<PF_HOSTNAME>/oidc/.well-known/openid-configuration').then(r=>console.log(r.status),e=>console.log(e.cause||e))"
   ```
+
+  If this reports that the address is in use, Grist is up: use the `exec` form above.
 
   `200` means the path works; a timeout points at the firewall, a refusal at the listen address, a certificate error at the certificate (it must cover all three names). From outside, `curl -s -o /dev/null -w "%{http_code}" https://<GRIST_HOSTNAME>/api/provisioning/self` must print `404`.
 - **Peek says first-run setup is skipped.** Expected: the suite configures Peek from the environment. The line appears only while Peek's database has no accounts.
