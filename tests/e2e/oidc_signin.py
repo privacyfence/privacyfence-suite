@@ -82,12 +82,15 @@ def _open(opener, url, data=None):
 
 def _check_cookies_accepted(resp, jar) -> None:
     names = {c.name for c in jar}
-    for header in resp.headers.get_all("Set-Cookie") or []:
+    headers = resp.headers.get_all("Set-Cookie") or []
+    for header in headers:
         name = header.split("=", 1)[0].strip()
         if name not in names:
-            attrs = [a.strip() for a in header.split(";")[1:]]
-            n = len(resp.headers.get_all("Set-Cookie") or [])
-            raise Fail(f"cookie refused: {name} ({n} Set-Cookie headers; attributes: {'; '.join(attrs) or 'none'})")
+            seen = " | ".join(
+                h.split("=", 1)[0].strip() + ": " + "; ".join(x.strip() for x in h.split(";")[1:])
+                for h in headers
+            )
+            raise Fail(f"cookie refused: {name} (Set-Cookie headers: {seen})")
 
 
 def sign_in_pf() -> None:
