@@ -1,0 +1,84 @@
+# PrivacyFence suite behind Cloudflare. Rendered by bootstrap.sh (placeholders: @PF@ @PEEK@ @GRIST@ @CERT_DIR@).
+# Based on configs/nginx-google/nginx/privacyfence-suite.conf, with three changes for Cloudflare:
+#  - the real client IP comes from CF-Connecting-IP, trusted only from Cloudflare's ranges
+#    (/etc/nginx/conf.d/00-cloudflare-realip.conf);
+#  - X-Forwarded-For is set to that single address instead of being appended to;
+#  - one Let's Encrypt certificate (DNS-01) is used by all three servers. It is publicly trusted, which
+#    the containers need: they call the public names and resolve them to this nginx (extra_hosts).
+
+map $http_upgrade $pf_suite_connection_upgrade { default upgrade; '' close; }
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @PF@ @PEEK@ @GRIST@;
+    return 301 https://$host$request_uri;
+}
+
+# PrivacyFence
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name @PF@;
+    ssl_certificate @CERT_DIR@/fullchain.pem;
+    ssl_certificate_key @CERT_DIR@/privkey.pem;
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    location / {
+        proxy_pass http://172.30.87.10:8765;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+
+# Peek
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name @PEEK@;
+    ssl_certificate @CERT_DIR@/fullchain.pem;
+    ssl_certificate_key @CERT_DIR@/privkey.pem;
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    location / {
+        proxy_pass http://172.30.87.11:7700;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}
+
+# Grist
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name @GRIST@;
+    ssl_certificate @CERT_DIR@/fullchain.pem;
+    ssl_certificate_key @CERT_DIR@/privkey.pem;
+    client_max_body_size 100m;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $pf_suite_connection_upgrade;
+    location / {
+        proxy_pass http://172.30.87.12:8484;
+    }
+    # The provisioner, for PrivacyFence's container alone; 404 for everyone else.
+    # $remote_addr is only rewritten for requests from Cloudflare's ranges, so this cannot be spoofed.
+    location /api/provisioning/ {
+        if ($remote_addr != 172.30.87.10) {
+            return 404;
+        }
+        proxy_pass http://172.30.87.13:8485;
+    }
+}
