@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `deploy/nginx-host-migration/migrate.sh copy` no longer stops halfway with "not empty; refusing to overwrite" after the old services are stopped. Creating the stack let Docker put the images' default folders into the new volumes; the volumes are now checked before the stack is created and cleared right before each copy.
+- `copy` switches Peek's own Google org sign-up off in the copied database. Peek refuses to start with it next to sign-up through PrivacyFence (`auth_oidc_signup cannot be used with auth_google_org_signup`); `preflight` reports it beforehand. The old Peek's database is not changed.
+- `migrate.sh nginx` uses a `pf_oauth` rate-limit zone that another nginx file already defines, instead of defining it again (`limit_req_zone "pf_oauth" is already bound`).
+
+### Added
+
+- `migrate.sh nginx-files` lists the nginx files that serve the three names (and `OLD_EXTRA_HOSTNAMES`) from `nginx -T`, so symlinks in `sites-enabled` are found; `preflight` shows the list.
+- `copy` renames the Compose files the old Peek and Grist containers were started from to `….migrated`, so they cannot be started beside the stack; `rollback` renames them back.
+- The README covers Compose v2 on Ubuntu, a Grist without a team site (create one and move the documents), a `GRIST_ADMIN_EMAIL` nobody signs in with, and a full clean-up with an archive first.
+
 ## [0.1.3] - 2026-11-01
 
 No image tag changed and no file is dropped; the configurations are the same as in 0.1.2 (PrivacyFence follows `latest`, 7.0.0 or later).

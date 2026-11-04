@@ -100,15 +100,22 @@ install -m 600 privacyfence.env.example privacyfence.env
 
 - **`.env`**: the three host names as nginx serves them; `PEEK_HOSTNAME` is the name PrivacyFence
   6.11 already connects Peek with. `ALLOWED_DOMAIN`, `GRIST_TEAM_SITE` (the existing team site's
-  domain), `GRIST_ADMIN_EMAIL` (an owner of that site), `PEEK_PROVISIONING_KEY_NAME` (Peek's Admin
-  page lists the provisioning keys; use the one PrivacyFence uses), `OLD_GRIST_HTPASSWD`.
-  `PRIVACYFENCE_IMAGE_TAG` is the version step 1 installed.
+  domain), `GRIST_ADMIN_EMAIL` (an owner of that site), `PEEK_PROVISIONING_KEY_NAME` (if Peek's Admin
+  page lists a provisioning key PrivacyFence uses, its name; otherwise keep `PrivacyFence` and a new
+  key is registered), `OLD_GRIST_HTPASSWD`, and in `OLD_EXTRA_HOSTNAMES` any other name nginx serves
+  for these apps (a second Peek name, for example). `PRIVACYFENCE_IMAGE_TAG` is the version step 1
+  installed.
 - **`privacyfence.env`**: the lines from `/etc/privacyfence-org.env` that step 1 added (mode,
-  identity provider, admins), with `PRIVACYFENCE_IDP_CLIENT_SECRET_FILE=/run/suite/idp_client_secret`.
+  identity provider, admins), each once, with `PRIVACYFENCE_IDP_CLIENT_SECRET_FILE=/run/suite/idp_client_secret`.
+  Leave out `PRIVACYFENCE_BIND_HOST`, `PRIVACYFENCE_PORT` and `PRIVACYFENCE_TRUSTED_PROXIES`: `compose.yaml`
+  sets them for the container, and the pip values (`127.0.0.1`) do not apply there.
   Leave out the old Peek and Grist provisioning keys. If step 1 showed a different key variable for
   Peek, add `<that name>_FILE=/run/suite/peek_provisioning_key`.
 - **`secrets/idp_client_secret`**: `sudo install -m 600 /var/lib/privacyfence-org/idp_client_secret secrets/`
   (own identity provider only).
+- **Docker Compose v2** (`docker compose`, 2.24 or later). Old Compose v1 (`docker-compose` 1.x) is not
+  enough. On Ubuntu's `docker.io`: `apt-get install docker-compose-v2`; with Docker's own packages:
+  `apt-get install docker-compose-plugin`. Both install beside v1.
 
 ## Step 3: preflight
 
@@ -117,14 +124,32 @@ sudo ./migrate.sh preflight
 ```
 
 It changes nothing. It checks the pip version and that the bundle is retired, the old containers and
-their mounts, that the old Grist is not newer than the fork image (a database cannot move back to an
-older Grist) and uses SQLite, and the network and ports. From Grist's home database it lists every site
+their mounts, whether the old Peek has Google org sign-up switched on (copy switches it off in the
+copy, because Peek refuses it next to sign-up through PrivacyFence), that the old Grist is not newer
+than the fork image (a database cannot move back to an older Grist) and uses SQLite, the network and
+ports, and which nginx files serve the three names. From Grist's home database it lists every site
 with its document count and tells you about:
 
 - **documents in personal sites**: the stack runs Grist with one team site (`GRIST_SINGLE_ORG`), so
-  move those documents to the team site in the old Grist (document menu, *Move*) first;
+  move those documents to the team site in the old Grist first. If the old Grist has no team site, an
+  owner of the documents creates one and moves them with Grist's API, straight on the old container's
+  port (an API key from Profile settings; `jq` for the listing):
+
+  ```bash
+  G=http://127.0.0.1:8484; A="Authorization: Bearer <api key>"
+  TEAM=$(curl -s -X POST -H "$A" -H 'Content-Type: application/json' -d '{"name":"<Name>","domain":"team"}' $G/api/orgs)
+  WS=$(curl -s -H "$A" $G/api/orgs/$TEAM/workspaces | jq -r '.[0].id')
+  PERS=$(curl -s -H "$A" $G/api/orgs | jq -r '.[] | select(.owner != null and .access == "owners") | .id')
+  for d in $(curl -s -H "$A" $G/api/orgs/$PERS/workspaces | jq -r '.[].docs[].id'); do
+    curl -s -o /dev/null -w "$d %{http_code}\n" -X PATCH -H "$A" -H 'Content-Type: application/json' -d "{\"workspace\": $WS}" $G/api/docs/$d/move
+  done
+  ```
+
+  A move keeps each document's ID, data, history and sharing. Remove the API key afterwards;
 - **`GRIST_ADMIN_EMAIL` not owning the team site**: add it as an owner in the old Grist, or use an
-  existing owner's address;
+  existing owner's address. It may be an address nobody signs in with (the provisioner works through
+  the boot key); every other owner then gets an automatic key, which the provisioner never gives
+  `GRIST_ADMIN_EMAIL`;
 - **htpasswd names that are not email addresses**: Grist matches the PrivacyFence sign-in by email, so
   that person's old Grist login must be renamed to their email first, or they get a new, empty user;
 - **logins outside `ALLOWED_DOMAIN`**: they can no longer sign in.
@@ -137,29 +162,42 @@ Fix every `FAIL` and decide on every `WARN` before step 4.
 sudo ./migrate.sh copy
 ```
 
-It pulls the images and creates the stack while the old services still run, then (after you type
-`yes`) disables and stops `privacyfence-org`, stops the old `peek` and `grist` containers with their
-restart policy set to `no` (the old policy is saved in `.migrate-state` for rollback), and copies:
+It refuses to start when one of the three data volumes already holds data. It pulls the images and
+creates the stack while the old services still run, then (after you type `yes`):
 
-- the pip data directory into `privacyfence-host_pf-data`, owned by the image's user `10001`;
-- the old Peek's `/data` into `privacyfence-host_peek-data`;
-- the old Grist's `/persist` into `privacyfence-host_grist-data`.
+- renames the Compose files the old `peek` and `grist` containers came from (if any) to `….migrated`,
+  so `docker compose up` there cannot start an old app beside the stack;
+- disables and stops `privacyfence-org`, stops the old containers with their restart policy set to
+  `no` (the old policies and the renamed files are saved in `.migrate-state` for rollback);
+- copies the pip data directory into `privacyfence-host_pf-data` (owned by the image's user `10001`),
+  the old Peek's `/data` into `privacyfence-host_peek-data` and the old Grist's `/persist` into
+  `privacyfence-host_grist-data` (PrivacyFence's and Peek's folders mode `0700`). Creating the stack
+  lets Docker put the images' empty default folders into new volumes; they are removed before each
+  copy, and they do not count as data in the check above;
+- switches Google org sign-up off in the copied Peek database, if it was on. If that step cannot run
+  (it installs `sqlite` in an Alpine container), it warns; switch it off by hand with Peek stopped:
 
-It refuses to copy into a volume that already holds data.
+  ```bash
+  docker run --rm -v privacyfence-host_peek-data:/data alpine:3.22 sh -c 'apk add -q --no-cache sqlite >/dev/null && sqlite3 /data/peek.db "$0" && chown 65532:65532 /data/peek.db*' "UPDATE settings SET value='false' WHERE key='auth_google_org_signup';"
+  ```
 
 ## Step 5: switch nginx and start the stack
 
 Render the new site and look at it. Certificates default to `/etc/ssl/certs/<host>/fullchain.pem` and
 `privkey.pem`; set `CERT_ROOT`, or `PF_CERT`/`PF_KEY`, `PEEK_CERT`/`PEEK_KEY`, `GRIST_CERT`/`GRIST_KEY`
-in the environment to change that.
+in the environment to change that. If another file already defines the `pf_oauth` rate-limit zone,
+the rendered site uses that one and says so.
 
 ```bash
 sudo ./migrate.sh nginx > /tmp/privacyfence-suite.conf
+sudo ./migrate.sh nginx-files
 ```
 
-Replace the old PrivacyFence, Peek and Grist server blocks with it (keep the old files outside nginx's
-include directory for rollback; other sites stay as they are). Any second Peek name gets a
-`return 301 https://<PEEK_HOSTNAME>$request_uri;` server of its own. Then:
+`nginx-files` asks nginx (`nginx -T`) which files serve the three names and `OLD_EXTRA_HOSTNAMES`,
+symlinks in `sites-enabled` included. Move those out of nginx's include directories (keep them, with
+their paths, for rollback; other sites stay as they are), install the rendered site in
+`/etc/nginx/conf.d/`, and give any second Peek name a `return 301 https://<PEEK_HOSTNAME>$request_uri;`
+server of its own. Then:
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
@@ -167,6 +205,9 @@ sudo ufw allow in on pf-suite to any port 443 proto tcp     # if the host runs a
 sudo docker compose up -d
 sudo docker compose ps
 ```
+
+The kit adds no IP rules to nginx: if only some names are reachable from the internet today (through
+DNS or the network edge), that stays as it is.
 
 The containers call the three public names on `172.30.87.1` (the `pf-suite` bridge), so:
 
@@ -181,8 +222,9 @@ The containers call the three public names on `172.30.87.1` (the `pf-suite` brid
 - Sign in at `https://<PF_HOSTNAME>`: connectors and AI clients work as before.
 - Open Peek and Grist: **Sign in with SSO** goes through PrivacyFence, and you see your existing uploads
   and documents.
-- `docker compose logs peek | grep provision` shows `provisioning key "<name>" rotated`, not
-  `registered` (registered means `PEEK_PROVISIONING_KEY_NAME` did not match: fix it and restart Peek).
+- `docker compose logs peek | grep provision` shows `provisioning key "<name>" rotated` when Peek had
+  that key, or `registered` when it is new. Registered although Peek had a key PrivacyFence used means
+  `PEEK_PROVISIONING_KEY_NAME` did not match: fix it and restart Peek.
 - `docker compose exec grist-provisioner grist-provisioner check` prints the user counts and the team site.
 - From outside: `curl -s -o /dev/null -w "%{http_code}\n" https://<GRIST_HOSTNAME>/api/provisioning/self`
   prints `404`.
@@ -196,13 +238,42 @@ generated values, upgrades), with the project name `privacyfence-host`.
 sudo ./migrate.sh rollback
 ```
 
-It stops the stack, gives the old containers their restart policy back, starts them and
-`privacyfence-org`. Put the old nginx site files back and reload nginx. Everything done in the stack
-since step 4 is lost; the old data is as step 4 left it. Going further back, to 6.x, is in
+It stops the stack, gives the old containers their restart policy back, gives renamed Compose files
+their names back, and starts the old containers and `privacyfence-org`. Put the old nginx site files
+back where they were and reload nginx. Everything done in the stack since step 4 is lost; the old data
+is as step 4 left it. Going further back, to 6.x, is in
 [PrivacyFence's guide](https://github.com/privacyfence/privacyfence/blob/main/docs/org-mode-setup-guide.md#going-back-to-6x).
 
 ## Clean up (after a few weeks)
 
-When you will not roll back any more: `docker rm peek grist` (their volumes or bind directories stay
-until you remove them), `sudo /opt/privacyfence/venv/bin/pip uninstall privacyfence`, remove the unit
-file, and delete the htpasswd file. Keep the step 0 backup.
+Cleaning up ends the way back, so wait until the stack has run well for a while. Never remove this
+folder or the `privacyfence-host_*` volumes: they are the live system.
+
+1. **Look at what is left.** Where the old containers keep their data (a folder or a named volume),
+   and the sizes:
+
+   ```bash
+   docker inspect peek grist --format '{{.Name}}: {{range .Mounts}}{{.Type}} {{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}} -> {{.Destination}}; {{end}}'
+   ```
+
+2. **Archive it** into one file readable by root only: the old settings, the old PrivacyFence data
+   directory, the old Compose folders, the old nginx site files and the old Peek and Grist data,
+   wherever it lives. The archive holds secrets; keep it like a backup.
+
+   ```bash
+   d=/root/pf-old-$(date +%F); mkdir -m 700 "$d"
+   tar -czf "$d/settings-and-pf-data.tgz" --ignore-failed-read /etc/privacyfence-org.env /etc/systemd/system/privacyfence-org.service /etc/systemd/system/privacyfence-org.service.d /var/lib/privacyfence-org <old Compose folders> <old nginx site files>
+   docker run --rm --volumes-from peek:ro -v "$d:/b" alpine:3.22 tar czf /b/peek-data.tgz -C /data .
+   docker run --rm --volumes-from grist:ro -v "$d:/b" alpine:3.22 tar czf /b/grist-persist.tgz -C /persist .
+   ```
+
+3. **Remove the old containers**, then the named volumes step 1 listed, their networks and images.
+4. **Remove the pip install:** the unit and its drop-in (`systemctl daemon-reload` after), `/opt/privacyfence`,
+   `/etc/privacyfence-org.env`, `/var/lib/privacyfence-org` and the `privacyfence-org` account.
+5. **Remove the old Compose folders** (with their `….migrated` files, any data folders step 1 listed and
+   the htpasswd file), and the old nginx site files. Keep any nginx file the new site still relies on,
+   such as one that defines the `pf_oauth` zone (`migrate.sh nginx` names it).
+6. **Remove the kit's leftovers:** `.migrate-state`, and the step 0 backups once the archive is checked.
+
+Back up the stack from now on as in the [operations guide](../../docs/operations.md#backup), with
+`project=privacyfence-host`, and keep `.env`, `privacyfence.env` and `secrets/` with it.

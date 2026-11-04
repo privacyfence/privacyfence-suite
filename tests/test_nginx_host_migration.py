@@ -95,8 +95,11 @@ def test_nginx_template_targets_and_guard():
     assert not re.search(r"ssl_protocols[^;]*TLSv1(\.1)?[ ;]", text)
 
 
-@pytest.mark.skipif(os.geteuid() != 0 or not shutil.which("bash"), reason="migrate.sh runs as root")
-def test_migrate_renders_nginx(tmp_path):
+ROOT_ONLY = pytest.mark.skipif(os.geteuid() != 0 or not shutil.which("bash"), reason="migrate.sh runs as root")
+
+
+def run_migrate(tmp_path, command, nginx_dump="", extra_env=None):
+    """Runs migrate.sh COMMAND in a copy of the kit, with a fake `nginx` whose -T prints NGINX_DUMP."""
     work = tmp_path / "m"
     shutil.copytree(DIR, work)
     env = (work / ".env.example").read_text()
@@ -104,17 +107,96 @@ def test_migrate_renders_nginx(tmp_path):
     env = env.replace("PEEK_HOSTNAME=\n", "PEEK_HOSTNAME=peek.example.net\n")
     env = env.replace("GRIST_HOSTNAME=\n", "GRIST_HOSTNAME=grist.example.net\n")
     (work / ".env").write_text(env)
-    out = subprocess.run(
-        ["bash", str(work / "migrate.sh"), "nginx"],
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (tmp_path / "nginx-T.txt").write_text(nginx_dump)
+    (fake / "nginx").write_text(f'#!/bin/sh\n[ "$1" = -T ] && cat "{tmp_path / "nginx-T.txt"}"\n')
+    (fake / "nginx").chmod(0o755)
+    return subprocess.run(
+        ["bash", str(work / "migrate.sh"), command],
         capture_output=True,
         text=True,
         check=True,
-        env={**os.environ, "GRIST_CERT": "/etc/ssl/grist/chain.pem"},
-    ).stdout
+        env={**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", **(extra_env or {})},
+    )
+
+
+NGINX_DUMP = """# configuration file /etc/nginx/nginx.conf:
+http { include /etc/nginx/conf.d/*.conf; include /etc/nginx/sites-enabled/*; }
+# configuration file /etc/nginx/conf.d/privacyfence-suite.conf:
+limit_req_zone $binary_remote_addr zone=pf_oauth:10m rate=30r/m;
+server { server_name pf.example.com; }
+# configuration file /etc/nginx/sites-enabled/pf-all:
+limit_req_zone $binary_remote_addr zone=pf_oauth:10m rate=30r/m;
+# configuration file /etc/nginx/sites-enabled/pf.example.com:
+server {
+\tserver_name\tpf.example.com;
+}
+# configuration file /etc/nginx/sites-enabled/peek:
+server {
+    server_name peek.example.net;
+}
+server {
+    server_name peek.example.com;
+}
+# configuration file /etc/nginx/sites-enabled/grist:
+server {
+    server_name grist.example.org grist.example.net;
+}
+# configuration file /etc/nginx/sites-enabled/static:
+server {
+    server_name pf.example.net;
+}
+"""
+
+
+@ROOT_ONLY
+def test_migrate_renders_nginx(tmp_path):
+    out = run_migrate(tmp_path, "nginx", extra_env={"GRIST_CERT": "/etc/ssl/grist/chain.pem"}).stdout
     assert "@" not in re.sub(r"#.*", "", out)
     assert "server_name pf.example.com;" in out
     assert "ssl_certificate     /etc/ssl/certs/peek.example.net/fullchain.pem;" in out
     assert "ssl_certificate     /etc/ssl/grist/chain.pem;" in out
+    assert re.search(r"^limit_req_zone .*zone=pf_oauth", out, re.MULTILINE)
+
+
+@ROOT_ONLY
+def test_render_uses_a_pf_oauth_zone_defined_elsewhere(tmp_path):
+    result = run_migrate(tmp_path, "nginx", NGINX_DUMP)
+    out = result.stdout
+    assert not re.search(r"^limit_req_zone", out, re.MULTILINE)
+    assert (
+        "# limit_req_zone $binary_remote_addr zone=pf_oauth:10m rate=30r/m; (already defined in /etc/nginx/sites-enabled/pf-all)"
+        in out
+    )
+    assert "limit_req zone=pf_oauth burst=20 nodelay;" in out
+    assert "/etc/nginx/sites-enabled/pf-all already defines the pf_oauth zone" in result.stderr
+
+
+@ROOT_ONLY
+def test_render_ignores_its_own_site_zone(tmp_path):
+    own_only = NGINX_DUMP.replace(
+        "# configuration file /etc/nginx/sites-enabled/pf-all:\n"
+        "limit_req_zone $binary_remote_addr zone=pf_oauth:10m rate=30r/m;\n",
+        "",
+    )
+    out = run_migrate(tmp_path, "nginx", own_only).stdout
+    assert re.search(r"^limit_req_zone .*zone=pf_oauth", out, re.MULTILINE)
+
+
+@ROOT_ONLY
+def test_nginx_files_finds_symlinked_sites_and_aliases(tmp_path):
+    out = run_migrate(tmp_path, "nginx-files", NGINX_DUMP, {"OLD_EXTRA_HOSTNAMES": "peek.example.com"}).stdout
+    assert out.split() == [
+        "/etc/nginx/sites-enabled/grist",
+        "/etc/nginx/sites-enabled/peek",
+        "/etc/nginx/sites-enabled/pf.example.com",
+    ]
+
+
+@ROOT_ONLY
+def test_nginx_files_without_nginx_prints_nothing(tmp_path):
+    assert run_migrate(tmp_path, "nginx-files", "").stdout == ""
 
 
 def test_migrate_script_lints():
