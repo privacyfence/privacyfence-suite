@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-04
+
+No image tag changed and no file is dropped (`deploy/` was never in an archive). Every configuration gains `compose.backends.yaml`, which stays off unless `.env` turns it on; `nginx-host` is new. PrivacyFence follows `latest`, 7.0.0 or later.
+
 ### Added
 
 - The `nginx-host` configuration: PrivacyFence, Peek and Grist behind an nginx that already runs on the host, with each app published on `127.0.0.1` (PrivacyFence 8765, Peek 7700, Grist 8484, the provisioner 8485), so the host's nginx proxies to `127.0.0.1` as it would to apps installed on the host. PrivacyFence signs people in with whatever `privacyfence.env` names: your own OIDC provider (Microsoft Entra ID included), your own Google app, or the built-in Google sign-in. `nginx/render.sh` prints the site from `.env`: it adds a redirect server for each name in `PEEK_REDIRECT_HOSTNAMES`, and uses a `pf_oauth` rate-limit zone that another nginx file already defines instead of defining it again. `install.sh nginx-host` installs it and `--upgrade` updates it like the other configurations.
