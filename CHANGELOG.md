@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-04
+
+Peek's image tag changed (0.18.0 → 0.18.1); no other tag changed, no `.env` variable is new and no file is dropped. Take the new `PEEK_IMAGE_TAG` into an existing `.env` by hand: `--upgrade` leaves `.env` alone. PrivacyFence follows `latest`, 7.0.0 or later.
+
+### Changed
+
+- Peek 0.18.0 → 0.18.1 in every configuration (`PEEK_IMAGE_TAG`). 0.18.1 negotiates the Docker Engine API version, so page backends (`compose.backends.yaml`) work with Docker Engine 29 and later, which refuse the API 1.43 that 0.18.0 always asked for. Nothing else changes; without backends the two versions behave the same.
+
 ## [0.1.4] - 2026-11-04
 
 No image tag changed and no file is dropped (`deploy/` was never in an archive). Every configuration gains `compose.backends.yaml`, which stays off unless `.env` turns it on; `nginx-host` is new. PrivacyFence follows `latest`, 7.0.0 or later.

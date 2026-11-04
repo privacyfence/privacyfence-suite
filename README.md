@@ -142,7 +142,7 @@ This release pins the following; `.env` holds the tags.
 
 | Image | Tag |
 |---|---|
-| Peek | `0.18.0` |
+| Peek | `0.18.1` |
 | Grist (from PrivacyFence's grist-core fork) | `1.7.22-pf.4` |
 | grist-provisioner | `0.2.0` |
 | PrivacyFence | `latest` (floats on purpose) |
