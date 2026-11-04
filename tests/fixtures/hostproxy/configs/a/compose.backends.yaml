@@ -1,0 +1,15 @@
+services:
+  peek:
+    environment:
+      PEEK_BACKENDS: docker
+      PEEK_BACKEND_NETWORK: peek-backends
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env}"
+    networks:
+      peek-backends: {}
+
+networks:
+  peek-backends:
+    name: peek-backends

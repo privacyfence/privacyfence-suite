@@ -13,6 +13,7 @@
 - `migrate.sh nginx-files` lists the nginx files that serve the three names (and `OLD_EXTRA_HOSTNAMES`) from `nginx -T`, so symlinks in `sites-enabled` are found; `preflight` shows the list.
 - `copy` renames the Compose files the old Peek and Grist containers were started from to `….migrated`, so they cannot be started beside the stack; `rollback` renames them back.
 - The README covers Compose v2 on Ubuntu, a Grist without a team site (create one and move the documents), a `GRIST_ADMIN_EMAIL` nobody signs in with, and a full clean-up with an archive first.
+- Peek page backends, optional in every configuration and in `deploy/nginx-host-migration`: a new `compose.backends.yaml` gives Peek the Docker socket and a separate `peek-backends` network, and is read only when `.env` sets `COMPOSE_FILE=compose.yaml:compose.backends.yaml` and `DOCKER_GID`. Off by default, because the socket is root on the host. In `localhost` it also makes `admin@privacyfence.localhost` the Peek admin, who then connects Peek by hand on `/connect`. New `.env` variables (add them to an existing `.env` to turn backends on): `COMPOSE_FILE`, `DOCKER_GID`. `scripts/check_configs.py` checks that only this file mounts the socket, and CI runs `docker compose config` with it.
 
 ## [0.1.3] - 2026-11-01
 

@@ -37,7 +37,7 @@ done
 docker compose start
 ```
 
-The Caddy configurations also have `caddy-data` (the certificates) and `caddy-config`; add them to the list. Each archive is one `docker run --rm -v <volume>:/v alpine tar` command. To restore, create the volume and unpack with `tar xzf` the same way, with the stack stopped.
+The Caddy configurations also have `caddy-data` (the certificates) and `caddy-config`; add them to the list. With [Peek page backends](configurations.md#peek-page-backends) on, each page with a backend has its own volume, `peek-<instance>-data-u<id>` (`docker volume ls --filter name=peek-`), which is not part of the project's volumes; archive those the same way. Each archive is one `docker run --rm -v <volume>:/v alpine tar` command. To restore, create the volume and unpack with `tar xzf` the same way, with the stack stopped.
 
 ## Rotating a generated value
 

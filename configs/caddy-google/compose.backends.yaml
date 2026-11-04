@@ -1,0 +1,24 @@
+# Optional: Peek page backends. Off unless .env names this file in COMPOSE_FILE:
+#   COMPOSE_FILE=compose.yaml:compose.backends.yaml
+#   DOCKER_GID=<output of: stat -c %g /var/run/docker.sock>
+# It mounts the Docker socket into Peek, which is root on this host: keep the allowed images on
+# Peek's Admin page (Backends tab) short. See docs/configurations.md#peek-page-backends.
+services:
+  peek:
+    environment:
+      PEEK_BACKENDS: docker
+      PEEK_DOCKER_HOST: unix:///var/run/docker.sock
+      PEEK_BACKEND_NETWORK: peek-backends
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env (stat -c %g /var/run/docker.sock)}"
+    networks:
+      # Peek keeps its pf address and also joins the network its backend containers run on.
+      peek-backends: {}
+
+networks:
+  # peekd starts backend containers on this network (it reuses it when it exists).
+  # It is a separate bridge, so backends cannot reach the other services on pf.
+  peek-backends:
+    name: peek-backends
