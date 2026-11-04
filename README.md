@@ -147,6 +147,10 @@ To hold an update back, set `PRIVACYFENCE_IMAGE_TAG` in `.env` to an exact versi
 
 Grist comes from PrivacyFence's [grist-core fork](https://github.com/privacyfence/grist-core/blob/v1.7.22-pf.4/pf/README.md): the open-source build with the full-edition switch off, and a check on every release that OIDC sign-in, API keys, the boot key, the team-site access API and the free plan's limits are not locked out.
 
+## Peek page backends
+
+Optional and off by default: Peek can run a Docker container next to a page (a page backend). Turning it on gives Peek the Docker socket, which is root on the host. See [Peek page backends](docs/configurations.md#peek-page-backends).
+
 ## More documentation
 
 - PrivacyFence: [Docker deployment](https://github.com/privacyfence/privacyfence/blob/main/docs/org-mode-docker.md), [setup guide](https://github.com/privacyfence/privacyfence/blob/main/docs/org-mode-setup-guide.md) (built-in Google sign-in, relay DNS records) and [OIDC provider](https://github.com/privacyfence/privacyfence/blob/main/docs/oidc-provider.md).

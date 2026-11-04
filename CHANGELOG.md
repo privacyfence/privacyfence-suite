@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Peek page backends, optional in every configuration and in `deploy/nginx-host-migration`: a new `compose.backends.yaml` gives Peek the Docker socket and a separate `peek-backends` network, and is read only when `.env` sets `COMPOSE_FILE=compose.yaml:compose.backends.yaml` and `DOCKER_GID`. Off by default, because the socket is root on the host. In `localhost` it also makes `admin@privacyfence.localhost` the Peek admin, who then connects Peek by hand on `/connect`. New `.env` variables (add them to an existing `.env` to turn backends on): `COMPOSE_FILE`, `DOCKER_GID`. `scripts/check_configs.py` checks that only this file mounts the socket, and CI runs `docker compose config` with it.
+
 ## [0.1.3] - 2026-11-01
 
 No image tag changed and no file is dropped; the configurations are the same as in 0.1.2 (PrivacyFence follows `latest`, 7.0.0 or later).

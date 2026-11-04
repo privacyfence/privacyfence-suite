@@ -31,6 +31,9 @@ COMPOSE_VAR_RE = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(:-)?")
 TEMPLATE_BRACED_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 PROXY_PASS_RE = re.compile(r"\bproxy_pass\s+([^\s;]+)\s*;")
 CADDY_VAR_RE = re.compile(r"\{\$([A-Za-z_][A-Za-z0-9_]*)\}")
+DOCKER_SOCKET = "/var/run/docker.sock"
+BACKENDS_FILE = "compose.backends.yaml"
+BACKEND_NETWORK = "peek-backends"
 
 
 def tag_name(service: str) -> str:
@@ -77,6 +80,50 @@ def proxy_networks(service: dict) -> list[dict]:
     if isinstance(networks, dict):
         return [n or {} for n in networks.values()]
     return []
+
+
+def mounts_docker_socket(service: dict) -> bool:
+    return DOCKER_SOCKET in volume_sources(service)
+
+
+def check_backends(cfg: Path, services: dict, env_example: dict[str, str] | None) -> list[str]:
+    """Peek page backends are opt-in: only compose.backends.yaml may hand Peek the Docker socket."""
+    problems = []
+    for name, svc in services.items():
+        if mounts_docker_socket(svc):
+            problems.append(
+                f"compose.yaml must not mount the Docker socket ({name}); page backends are opt-in in {BACKENDS_FILE}"
+            )
+    path = cfg / BACKENDS_FILE
+    if not path.is_file():
+        return problems + [f"missing {BACKENDS_FILE}"]
+    text = path.read_text()
+    data = yaml.safe_load(text) or {}
+    overlay = data.get("services") or {}
+    for name, svc in overlay.items():
+        if name not in services and name not in REQUIRED_SERVICES:
+            problems.append(f"{BACKENDS_FILE} adds service {name}; it may only extend services of compose.yaml")
+        elif name != "peek" and mounts_docker_socket(svc or {}):
+            problems.append(f"{BACKENDS_FILE}: only peek may mount the Docker socket, not {name}")
+    peek = overlay.get("peek") or {}
+    env = peek.get("environment")
+    env = env if isinstance(env, dict) else {}
+    if env.get("PEEK_BACKENDS") != "docker" or env.get("PEEK_BACKEND_NETWORK") != BACKEND_NETWORK:
+        problems.append(
+            f"{BACKENDS_FILE}: peek must set PEEK_BACKENDS=docker and PEEK_BACKEND_NETWORK={BACKEND_NETWORK}"
+        )
+    if not mounts_docker_socket(peek):
+        problems.append(f"{BACKENDS_FILE}: peek must mount {DOCKER_SOCKET}")
+    network = (data.get("networks") or {}).get(BACKEND_NETWORK) or {}
+    if network.get("name") != BACKEND_NETWORK or network.get("internal"):
+        problems.append(
+            f"{BACKENDS_FILE}: the {BACKEND_NETWORK} network must be named {BACKEND_NETWORK} and not internal"
+        )
+    if env_example is not None:
+        for match in COMPOSE_VAR_RE.finditer(text):
+            if not match.group(2) and match.group(1) not in env_example:
+                problems.append(f"{match.group(1)} is used by {BACKENDS_FILE} but not in .env.example")
+    return problems
 
 
 def check_template_locations(path: Path, rel: str) -> list[str]:
@@ -275,6 +322,8 @@ def check_config(root: Path, cfg: Path) -> list[str]:
         for source in volume_sources(svc):
             if source in SECRET_VOLUMES and SECRET_VOLUMES[source] != name:
                 problems.append(f"{name} mounts {source}")
+
+    problems += check_backends(cfg, services, env_example)
 
     if "nginx" in services:
         problems.append("nginx runs on the host; remove the nginx service")

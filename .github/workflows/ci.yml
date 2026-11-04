@@ -46,6 +46,8 @@ jobs:
                 sed -i "s|^${key}=.*|${pair}|" .env
               done
               docker compose config -q
+              echo "== $dir with page backends"
+              DOCKER_GID=999 COMPOSE_FILE=compose.yaml:compose.backends.yaml docker compose config -q
             )
           done
       - name: docker compose config for deploy/nginx-host-migration
@@ -61,6 +63,7 @@ jobs:
             -e 's|^GRIST_TEAM_SITE=.*|GRIST_TEAM_SITE=team|' \
             -e 's|^GRIST_ADMIN_EMAIL=.*|GRIST_ADMIN_EMAIL=grist-admin@example.com|' .env
           docker compose config -q
+          DOCKER_GID=999 COMPOSE_FILE=compose.yaml:compose.backends.yaml docker compose config -q
 
   shellcheck:
     runs-on: ubuntu-latest
