@@ -7,6 +7,4 @@ configs/*/certs/*.pem
 __pycache__/
 .pytest_cache/
 dist/
-!deploy/*/secrets/README.md
 privacyfence.env
-.migrate-state

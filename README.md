@@ -2,13 +2,14 @@
 
 [PrivacyFence](https://github.com/privacyfence/privacyfence), [Peek](https://github.com/privacyfence/peek) and [Grist](https://github.com/privacyfence/grist-core) in one Docker stack, already connected. One `docker compose up -d` starts all three. Everybody who signs in to PrivacyFence finds Peek and Grist connected, and signs in to Peek and Grist **through PrivacyFence**. Nobody creates a provisioning key, registers Peek or Grist with an identity provider, or turns a switch on the Admin page.
 
-The repository ships four configurations, each a self-contained folder:
+The repository ships five configurations, each a self-contained folder:
 
 | Configuration | Proxy | PrivacyFence signs people in with | Peek and Grist sign in with |
 |---|---|---|---|
 | `caddy-idp` | Caddy container (automatic HTTPS) | your organization's OIDC identity provider (one client registration, for PrivacyFence only) | PrivacyFence |
 | `caddy-google` | Caddy container (automatic HTTPS) | PrivacyFence's built-in Google sign-in (nothing to register) | PrivacyFence |
 | `nginx-google` | the nginx already running on your host, with your certificate (an example site configuration is included, no nginx container) | the same as `caddy-google` | PrivacyFence |
+| `nginx-host` | the nginx already running on your host, proxying to the apps on `127.0.0.1` (a site template and `nginx/render.sh` are included, no nginx container) | what `privacyfence.env` names: your own OIDC provider, your own Google app, or the built-in Google sign-in | PrivacyFence |
 | `localhost` | none | single-user mode: setup code, then passkey | PrivacyFence |
 
 Every variable is explained in [docs/configurations.md](https://github.com/privacyfence/privacyfence-suite/blob/main/docs/configurations.md). Upgrades, backups, rotating secrets and troubleshooting are in [docs/operations.md](https://github.com/privacyfence/privacyfence-suite/blob/main/docs/operations.md).
@@ -16,8 +17,9 @@ Every variable is explained in [docs/configurations.md](https://github.com/priva
 ## Prerequisites
 
 - Docker Engine 24 or later with Compose 2.24 or later.
-- Proxy configurations (`caddy-idp`, `caddy-google`, `nginx-google`): three DNS names pointing at the server (one each for PrivacyFence, Peek and Grist), and ports 80 and 443 reachable from the internet.
+- Proxy configurations (`caddy-idp`, `caddy-google`, `nginx-google`, `nginx-host`): three DNS names pointing at the server (one each for PrivacyFence, Peek and Grist), and ports 80 and 443 reachable from the internet.
 - `nginx-google` only: nginx 1.25.1 or later already running on a Linux host with rootful Docker. Docker Desktop and rootless Docker do not route the stack's addresses to the host; use `caddy-google` there.
+- `nginx-host` only: nginx already running on a Linux host with rootful Docker, a certificate from a public CA for each name, and the apps' ports `8765`, `7700`, `8484` and `8485` free on `127.0.0.1`.
 - `caddy-idp` only: an OIDC identity provider where you can register one confidential client.
 
 ## Install
@@ -94,6 +96,15 @@ After installing, `cd privacyfence-<config>`.
 3. `docker compose up -d`.
 4. Publish the relay DNS records as for `caddy-google`, then sign in at `https://<PF_HOSTNAME>`.
 
+### nginx-host
+
+For a host whose nginx already serves other sites, or that runs PrivacyFence, Peek or Grist today the way most self-hosted apps run: on a local port behind nginx.
+
+1. Edit `.env`: the three host names, `ALLOWED_DOMAIN` and `GRIST_ADMIN_EMAIL`; `PEEK_REDIRECT_HOSTNAMES` for any other Peek name.
+2. Edit `privacyfence.env` (the installer made it from `privacyfence.env.example`, mode `0600`): keep one of its blocks, your own OIDC provider (also your own Google app), or the built-in Google sign-in, and set the admins. A client secret goes in `secrets/idp_client_secret`.
+3. Render the site and install it as in [`nginx/README.md`](https://github.com/privacyfence/privacyfence-suite/blob/main/configs/nginx-host/nginx/README.md): `sh nginx/render.sh > /etc/nginx/conf.d/privacyfence-suite.conf`, remove any old site for the same names, `nginx -t`, reload, and let the `pf-suite` interface reach TCP 443.
+4. `docker compose up -d`, then sign in at `https://<PF_HOSTNAME>`. With the built-in Google sign-in, publish the relay DNS records first, as for `caddy-google`.
+
 ### localhost
 
 One person, one computer, everything published on `127.0.0.1` only. No `.env` editing is needed.
@@ -115,13 +126,14 @@ Peek is at <http://localhost:7700> and Grist at <http://localhost:8484>. Anyone 
 
 - **`caddy-google` and `nginx-google`** admit only verified Google Workspace accounts, admins included; personal Gmail addresses cannot sign in. The PrivacyFence container needs outbound HTTPS to `oauth.privacyfence.eu`.
 - **`ALLOWED_DOMAIN`** (exactly one domain) limits who signs in to all three apps. PrivacyFence reads it only at its **first start**; to change it later, use its Admin page. Peek and the provisioner pick up a changed value at their next start.
+- **`nginx-host`** signs people in as `privacyfence.env` says; the notes for `caddy-idp` (your own provider) or `caddy-google` (the built-in Google sign-in) apply to the block you keep. With your own Google app, PrivacyFence 7 admits an address only when its Google Workspace domain matches it, so personal Gmail and secondary-domain addresses are refused.
 - **`caddy-idp`:** Peek and Grist refuse a sign-in unless `email_verified` is true. An identity provider that never sends the claim (for example Microsoft Entra ID) needs `IDP_TRUST_UNVERIFIED_EMAIL=true`, which trusts addresses in `ALLOWED_DOMAIN`.
 
 ## Admins
 
-- **PrivacyFence admins** are `ADMIN_EMAILS`.
+- **PrivacyFence admins** are `ADMIN_EMAILS` (in `nginx-host`: `PRIVACYFENCE_ADMIN_EMAILS` or an admin group claim in `privacyfence.env`).
 - **Peek admins** are `PEEK_ADMIN_EMAILS` (optional, empty by default). Peek refuses to provision an admin's account, so a Peek admin is **not** connected automatically: they connect Peek by hand on PrivacyFence's `/connect`. Each address must be in `ALLOWED_DOMAIN`. Use a dedicated admin address. With the variable empty, Peek simply has no admin; everything the suite needs comes from the environment.
-- **Grist install admin** is `GRIST_ADMIN_EMAIL`. It must be a real address that can sign in to PrivacyFence, because Grist signs people in only through PrivacyFence. Their automatic Grist key is refused too; they paste their own key on `/connect` if they want PrivacyFence to reach Grist. Use a dedicated admin address.
+- **Grist install admin** is `GRIST_ADMIN_EMAIL`. It must be a real address that can sign in to PrivacyFence, because Grist signs people in only through PrivacyFence (in `nginx-host` it may also be an address nobody signs in with, which leaves Grist to its boot key, as in `localhost`). Their automatic Grist key is refused too; they paste their own key on `/connect` if they want PrivacyFence to reach Grist. Use a dedicated admin address.
 - **`localhost`** has no Peek admin and nobody can become one. Grist's admin there is `grist-admin@privacyfence.localhost`, which nobody can sign in as, so that Grist is administered by the boot key only.
 
 ## Versions

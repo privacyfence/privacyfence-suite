@@ -1,14 +1,11 @@
-# PrivacyFence (organization mode), Peek and Grist in one stack, for a server that already runs them
-# separately: PrivacyFence from pip under systemd, Peek and Grist as their own containers, all behind the
-# nginx on the host. See README.md for the migration, which keeps every app's data.
-#
-# Differences from configs/nginx-google:
-#  - every app is also published on 127.0.0.1 at the port it had (8765, 7700, 8484; the new
-#    provisioner on 8485), so the host's nginx keeps its 127.0.0.1 upstreams;
-#  - PrivacyFence's server and identity-provider settings come from privacyfence.env (what
-#    `privacyfence-app --print-env-from-bundle` printed on the pip install), not from compose;
-#  - the Grist team site is the one the old Grist already has (GRIST_TEAM_SITE, no default).
-name: privacyfence-host
+# nginx-host: PrivacyFence (organization mode), Peek and Grist behind the nginx that already runs on the host.
+# Each app is also published on 127.0.0.1 (PrivacyFence 8765, Peek 7700, Grist 8484, the provisioner
+# 8485), so the host's nginx proxies to 127.0.0.1 as it would to apps installed on the host.
+# PrivacyFence's identity provider (your own OIDC provider, your own Google app, or the built-in Google
+# sign-in) and its admins come from privacyfence.env.
+# Every variable is explained in docs/configurations.md; nginx/README.md has the site configuration.
+# An existing stack keeps its Compose project name (and with it its volumes) with COMPOSE_PROJECT_NAME in .env.
+name: privacyfence-nginx-host
 
 services:
   init:
@@ -37,16 +34,16 @@ services:
     ports:
       - "127.0.0.1:8765:8765"
     env_file:
-      # Mode, identity provider and admins, moved out of the 6.x bundle (README.md, step 1).
+      # Mode, identity provider and admins (privacyfence.env.example).
       - path: privacyfence.env
         required: true
     environment:
-      # These win over privacyfence.env: the pip install bound 127.0.0.1 and trusted 127.0.0.1,
-      # in the container nginx arrives from the pf-suite gateway.
+      # These win over privacyfence.env: in the container nginx arrives from the pf-suite gateway.
       PRIVACYFENCE_BIND_HOST: 0.0.0.0
       PRIVACYFENCE_PORT: "8765"
       PRIVACYFENCE_ISSUER_URL: https://${PF_HOSTNAME:?set PF_HOSTNAME in .env}
       PRIVACYFENCE_TRUSTED_PROXIES: 172.30.87.1
+      PRIVACYFENCE_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
       PRIVACYFENCE_PEEK_BASE_URL: https://${PEEK_HOSTNAME:?set PEEK_HOSTNAME in .env}
       PRIVACYFENCE_PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
       PRIVACYFENCE_PEEK_AUTO_PROVISION: "true"
@@ -93,8 +90,8 @@ services:
       PEEK_ALLOWED_EMAIL_DOMAIN: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
       PEEK_OIDC_SIGNUP: "true"
       PEEK_PROVISIONING_KEY_FILE: /run/suite/peek_provisioning_key
-      # The name of the provisioner the 6.11 server already uses in Peek: the key is rotated in
-      # place, so the accounts it provisioned stay linked.
+      # A provisioning key with this name in Peek is rotated in place (so the accounts it provisioned
+      # stay linked); otherwise a new one is registered under it.
       PEEK_PROVISIONING_KEY_NAME: ${PEEK_PROVISIONING_KEY_NAME:-PrivacyFence}
       PEEK_OIDC_ISSUER_URL: https://${PF_HOSTNAME:?set PF_HOSTNAME in .env}/oidc
       PEEK_OIDC_CLIENT_ID: peek
@@ -132,7 +129,7 @@ services:
       - "127.0.0.1:8484:8484"
     environment:
       APP_HOME_URL: https://${GRIST_HOSTNAME:?set GRIST_HOSTNAME in .env}
-      GRIST_SINGLE_ORG: ${GRIST_TEAM_SITE:?set GRIST_TEAM_SITE in .env}
+      GRIST_SINGLE_ORG: ${GRIST_TEAM_SITE:-team}
       GRIST_ADMIN_EMAIL: ${GRIST_ADMIN_EMAIL:?set GRIST_ADMIN_EMAIL in .env}
       GRIST_IN_SERVICE: "true"
       GRIST_ORG_CREATION_ANYONE: "false"
@@ -181,7 +178,7 @@ services:
       GRIST_ADMIN_EMAIL: ${GRIST_ADMIN_EMAIL:?set GRIST_ADMIN_EMAIL in .env}
       PROVISIONER_KEY_FILE: /run/suite/grist_provisioning_key
       PROVISIONER_GRIST_URL: http://grist:8484
-      PROVISIONER_GRIST_TEAM_SITE: ${GRIST_TEAM_SITE:?set GRIST_TEAM_SITE in .env}
+      PROVISIONER_GRIST_TEAM_SITE: ${GRIST_TEAM_SITE:-team}
       PROVISIONER_GRIST_BOOT_KEY_FILE: /run/suite/grist_boot_key
       PROVISIONER_ALLOWED_DOMAINS: ${ALLOWED_DOMAIN:?set ALLOWED_DOMAIN in .env}
     healthcheck:

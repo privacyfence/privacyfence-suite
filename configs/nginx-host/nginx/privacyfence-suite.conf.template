@@ -1,15 +1,14 @@
-# PrivacyFence, Peek and Grist on the host's nginx, after the migration (README.md, step 5).
+# nginx-host: the site configuration for the nginx on this host. Do not edit placeholders by hand:
+# nginx/render.sh fills them from .env (see nginx/README.md).
 # Placeholders: @PF@ @PEEK@ @GRIST@ (host names) and @PF_CERT@ @PF_KEY@ @PEEK_CERT@ @PEEK_KEY@
 # @GRIST_CERT@ @GRIST_KEY@ (certificate chain and key per name; the same pair three times for one
-# SAN or wildcard certificate). migrate.sh nginx renders it from .env and the environment.
+# SAN or wildcard certificate).
 #
-# What changed from a typical pre-suite setup:
-#  - Grist has no basic auth and no X-Forwarded-User: people sign in to Grist through PrivacyFence.
-#  - /api/ on Grist is open: Grist checks the session cookie or API key itself, and the Grist web app
-#    calls /api/ from the browser.
-#  - /api/provisioning/ goes to the new provisioner, for PrivacyFence's container (172.30.87.10) only.
-#  - Upstreams stay on 127.0.0.1; the stack publishes the same ports there.
-#  - TLS 1.2 and 1.3 only.
+#  - Upstreams are 127.0.0.1: the stack publishes each app there.
+#  - Grist signs people in through PrivacyFence, so it has no basic auth here, and /api/ is open:
+#    Grist checks the session cookie or API key itself, and the Grist web app calls /api/ from the browser.
+#  - /api/provisioning/ goes to the provisioner, for PrivacyFence's container (172.30.87.10) only.
+#  - TLS 1.2 and 1.3 only. No IP rules: which names the internet reaches is up to DNS and your network.
 #
 # Every `listen` is on all addresses, so nginx also answers the containers on 172.30.87.1
 # (they reach the public names there through extra_hosts).
