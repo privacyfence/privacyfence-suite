@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIGS = ["caddy-google", "caddy-idp", "localhost", "nginx-google"]
+CONFIGS = ["caddy-google", "caddy-idp", "localhost", "nginx-google", "nginx-host"]
 EPOCH = "1700000000"
 
 
@@ -143,6 +143,18 @@ def test_install_fresh_and_upgrade(dist, tmp_path):
     assert up_y.returncode == 0, up_y.stderr
     assert (target / ".env").read_text() == "EDITED=1\n"
     assert (piped_dir / "secrets" / "idp_client_secret").read_text() == "not-a-real-secret\n"
+
+    host_dir = tmp_path / "H"
+    host = run(["sh", str(dist / "install.sh"), "nginx-host", "--dir", str(host_dir)], env=env)
+    assert host.returncode == 0, host.stderr
+    assert (host_dir / "privacyfence.env").read_bytes() == (host_dir / "privacyfence.env.example").read_bytes()
+    assert (host_dir / "privacyfence.env").stat().st_mode & 0o777 == 0o600
+    assert (host_dir / "nginx" / "render.sh").stat().st_mode & 0o111
+    assert "nginx/render.sh" in host.stdout
+    (host_dir / "privacyfence.env").write_text("PRIVACYFENCE_MODE=org\n")
+    up_h = run(["sh", str(dist / "install.sh"), "nginx-host", "--dir", str(host_dir), "--upgrade"], env=env)
+    assert up_h.returncode == 0, up_h.stderr
+    assert (host_dir / "privacyfence.env").read_text() == "PRIVACYFENCE_MODE=org\n"
 
     not_suite = tmp_path / "empty"
     not_suite.mkdir()

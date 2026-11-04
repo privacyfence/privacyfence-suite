@@ -33,6 +33,7 @@ jobs:
             (
               cd "$dir"
               cp .env.example .env
+              if [ -f privacyfence.env.example ]; then cp privacyfence.env.example privacyfence.env; fi
               for pair in \
                 PF_HOSTNAME=pf.example.com \
                 PEEK_HOSTNAME=peek.example.com \
@@ -48,26 +49,13 @@ jobs:
               docker compose config -q
             )
           done
-      - name: docker compose config for deploy/nginx-host-migration
-        working-directory: deploy/nginx-host-migration
-        run: |
-          set -eu
-          cp .env.example .env
-          cp privacyfence.env.example privacyfence.env
-          sed -i -e 's|^PF_HOSTNAME=.*|PF_HOSTNAME=pf.example.com|' \
-            -e 's|^PEEK_HOSTNAME=.*|PEEK_HOSTNAME=peek.example.com|' \
-            -e 's|^GRIST_HOSTNAME=.*|GRIST_HOSTNAME=grist.example.com|' \
-            -e 's|^ALLOWED_DOMAIN=.*|ALLOWED_DOMAIN=example.com|' \
-            -e 's|^GRIST_TEAM_SITE=.*|GRIST_TEAM_SITE=team|' \
-            -e 's|^GRIST_ADMIN_EMAIL=.*|GRIST_ADMIN_EMAIL=grist-admin@example.com|' .env
-          docker compose config -q
 
   shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: shellcheck -s sh common/init.sh release/install.sh scripts/build_release.sh
-      - run: shellcheck deploy/nginx-host-migration/migrate.sh
+      - run: shellcheck -s sh configs/nginx-host/nginx/render.sh
 
   caddy:
     runs-on: ubuntu-latest
@@ -104,21 +92,28 @@ jobs:
             -v "$PWD/configs/nginx-google/nginx/privacyfence-suite.conf:/etc/nginx/conf.d/default.conf:ro" \
             -v "$certs:/etc/ssl/privacyfence-suite:ro" \
             "$NGINX_IMAGE" nginx -t
-      - name: nginx -t on deploy/nginx-host-migration's rendered site
+      - name: nginx -t on the nginx-host site as nginx/render.sh prints it
         run: |
           set -eu
           certs=$(mktemp -d)
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=pf.example.com" \
-            -addext "subjectAltName=DNS:pf.example.com,DNS:peek.example.com,DNS:grist.example.com" \
+            -addext "subjectAltName=DNS:pf.example.com,DNS:peek.example.com,DNS:grist.example.com,DNS:peek.example.net" \
             -keyout "$certs/privkey.pem" -out "$certs/fullchain.pem"
           chmod 644 "$certs"/*.pem
-          chmod 755 "$certs"
-          sed -e 's|@PF@|pf.example.com|g' -e 's|@PEEK@|peek.example.com|g' -e 's|@GRIST@|grist.example.com|g' \
-            -e 's|@[A-Z]*_CERT@|/etc/ssl/pf/fullchain.pem|g' -e 's|@[A-Z]*_KEY@|/etc/ssl/pf/privkey.pem|g' \
-            deploy/nginx-host-migration/nginx/privacyfence-suite.conf.template > "$certs/site.conf"
+          for n in pf.example.com peek.example.com grist.example.com peek.example.net; do
+            mkdir -p "$certs/$n" && cp "$certs/fullchain.pem" "$certs/privkey.pem" "$certs/$n/"
+          done
+          chmod -R a+rX "$certs"
+          cd configs/nginx-host
+          cp .env.example .env
+          sed -i -e 's|^PF_HOSTNAME=.*|PF_HOSTNAME=pf.example.com|' \
+            -e 's|^PEEK_HOSTNAME=.*|PEEK_HOSTNAME=peek.example.com|' \
+            -e 's|^GRIST_HOSTNAME=.*|GRIST_HOSTNAME=grist.example.com|' \
+            -e 's|^PEEK_REDIRECT_HOSTNAMES=.*|PEEK_REDIRECT_HOSTNAMES=peek.example.net|' .env
+          CERT_ROOT=/etc/ssl/certs sh nginx/render.sh > "$certs/site.conf"
           docker run --rm \
             -v "$certs/site.conf:/etc/nginx/conf.d/default.conf:ro" \
-            -v "$certs:/etc/ssl/pf:ro" \
+            -v "$certs:/etc/ssl/certs:ro" \
             "$NGINX_IMAGE" nginx -t
       - name: three HTTPS server blocks and the port-80 block
         run: |

@@ -97,6 +97,10 @@ install_fresh() {
     mkdir -p "$(dirname "$2")"
     mv "$1" "$2"
     cp "$2/.env.example" "$2/.env"
+    if [ -f "$2/privacyfence.env.example" ]; then
+        cp "$2/privacyfence.env.example" "$2/privacyfence.env"
+        chmod 600 "$2/privacyfence.env"
+    fi
     printf 'installed %s in %s\n' "$VERSION" "$2"
 }
 
@@ -131,6 +135,12 @@ next_steps() {
     nginx-google)
         printf '  edit .env (hostnames, admin e-mail addresses, allowed domain)\n'
         printf '  install the example site configuration in your nginx: see nginx/README.md\n'
+        printf '  docker compose up -d\n'
+        ;;
+    nginx-host)
+        printf '  edit .env (hostnames, allowed domain, Grist admin)\n'
+        printf '  edit privacyfence.env (your identity provider and admins); a client secret goes in secrets/idp_client_secret\n'
+        printf '  sh nginx/render.sh > /etc/nginx/conf.d/privacyfence-suite.conf: see nginx/README.md\n'
         printf '  docker compose up -d\n'
         ;;
     *)

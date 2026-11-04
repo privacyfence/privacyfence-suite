@@ -6,6 +6,8 @@ All proxy configurations share these variables. In the tables, "ends up in" name
 
 ## Shared by `caddy-idp`, `caddy-google` and `nginx-google`
 
+(`nginx-host` has its own table below.)
+
 | Variable | Meaning | Ends up in |
 |---|---|---|
 | `PRIVACYFENCE_IMAGE_TAG` | PrivacyFence image tag. `latest` on purpose (needs 7.0.0 or later); set an exact version such as `7.0.0` to hold back an update | `image` of `privacyfence` |
@@ -60,6 +62,33 @@ The network facts:
 | Provisioner access | the example nginx configuration answers `/api/provisioning/` with 404 unless the source is `172.30.87.10` (PrivacyFence) |
 
 The Caddy configurations use the same subnet with Caddy at `172.30.87.2` (trusted proxy `172.30.87.2`) and the three host names as network aliases of the `caddy` service.
+
+## `nginx-host`
+
+The host's nginx as in `nginx-google`, with three differences: every app is also published on `127.0.0.1` and nginx proxies there; PrivacyFence's identity provider and admins come from `privacyfence.env`; and the site is a template that `nginx/render.sh` fills from `.env`.
+
+| Variable | Meaning | Ends up in |
+|---|---|---|
+| `PRIVACYFENCE_IMAGE_TAG`, `PEEK_IMAGE_TAG`, `GRIST_IMAGE_TAG`, `GRIST_PROVISIONER_IMAGE_TAG`, `ALPINE_IMAGE_TAG` | As in the shared table | the `image` of each service |
+| `PF_HOSTNAME`, `PEEK_HOSTNAME`, `GRIST_HOSTNAME` | As in the shared table | as there, plus the rendered site's `server_name`s and default certificate paths |
+| `ALLOWED_DOMAIN` | As in the shared table | `privacyfence`: `PRIVACYFENCE_ALLOWED_DOMAINS` (first start only); `peek`: `PEEK_ALLOWED_EMAIL_DOMAIN`; `grist-provisioner`: `PROVISIONER_ALLOWED_DOMAINS` |
+| `GRIST_ADMIN_EMAIL` | Grist install admin; must own the team site. It may be an address nobody signs in with: the provisioner works through the boot key | `grist` and `grist-provisioner`: `GRIST_ADMIN_EMAIL` |
+| `PEEK_ADMIN_EMAILS` | As in the shared table | `peek`: `PEEK_ADMIN_EMAILS` |
+| `GRIST_TEAM_SITE` | Optional, default `team` | `grist`: `GRIST_SINGLE_ORG`; `grist-provisioner`: `PROVISIONER_GRIST_TEAM_SITE` |
+| `PEEK_PROVISIONING_KEY_NAME` | Optional, default `PrivacyFence`. A provisioning key with this name in Peek is rotated in place; otherwise a new one is registered | `peek`: `PEEK_PROVISIONING_KEY_NAME` |
+| `PEEK_REDIRECT_HOSTNAMES` | Optional, space-separated. Other names that redirect to `PEEK_HOSTNAME` | `nginx/render.sh`: one redirect server each |
+| `CERT_ROOT`, `PF_CERT`/`PF_KEY`, `PEEK_CERT`/`PEEK_KEY`, `GRIST_CERT`/`GRIST_KEY` | Optional. Certificate locations; default `/etc/ssl/certs/<host>/fullchain.pem` and `privkey.pem` | `nginx/render.sh` |
+| `COMPOSE_PROJECT_NAME` | Optional. Keeps another project name (and the volumes named after it), default `privacyfence-nginx-host` | Compose |
+| `privacyfence.env` (a file) | `PRIVACYFENCE_MODE=org` and one sign-in block: `PRIVACYFENCE_IDP_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET_FILE=/run/suite/idp_client_secret` and `PRIVACYFENCE_ADMIN_EMAILS` (or an admin group claim) for your own provider or Google app, or `PRIVACYFENCE_IDP=builtin-google` | `privacyfence` (`env_file`); `compose.yaml` sets the address, proxy, Peek, Grist and OIDC-client variables itself, and those win |
+| `secrets/idp_client_secret` (a file) | Your own provider's client secret, if any | installed by `init` as `/run/suite/idp_client_secret` |
+
+| Fact | Value |
+|---|---|
+| Published | `127.0.0.1:8765` (PrivacyFence), `127.0.0.1:7700` (Peek), `127.0.0.1:8484` (Grist), `127.0.0.1:8485` (provisioner) |
+| Network | as in `nginx-google`: `pf-suite` bridge, gateway `172.30.87.1`, fixed addresses, `extra_hosts` |
+| Trusted proxy | `172.30.87.1`: nginx's connections to the published ports reach the containers from the gateway |
+| Provisioner access | the rendered site answers `/api/provisioning/` with 404 unless the source is `172.30.87.10` (PrivacyFence) |
+| Rate limit | `pf_oauth` on `/register`, `/authorize` and `/token`; `render.sh` uses the zone another nginx file already defines |
 
 ## `localhost`
 

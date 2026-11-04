@@ -97,7 +97,15 @@ def check_template_locations(path: Path, rel: str) -> list[str]:
 
 
 def nginx_confs(cfg: Path) -> list[Path]:
-    return sorted((cfg / "nginx").glob("*.conf")) if (cfg / "nginx").is_dir() else []
+    if not (cfg / "nginx").is_dir():
+        return []
+    return sorted([*(cfg / "nginx").glob("*.conf"), *(cfg / "nginx").glob("*.conf.template")])
+
+
+def loopback_port(name: str) -> str:
+    """The only form a host-proxy service may publish: its own port on 127.0.0.1."""
+    port = SERVICE_PORTS.get(name)
+    return f"127.0.0.1:{port}:{port}" if port else ""
 
 
 def service_address(service: dict) -> str | None:
@@ -109,10 +117,19 @@ def service_address(service: dict) -> str | None:
 
 def check_host_proxy(cfg: Path, compose: dict, services: dict, confs: list[Path]) -> list[str]:
     problems = []
+    loopback: dict[str, int] = {}
     for name, svc in services.items():
-        if svc.get("ports"):
+        ports = svc.get("ports") or []
+        if not ports:
+            continue
+        allowed = loopback_port(name)
+        if allowed and [str(p) for p in ports] == [allowed]:
+            loopback[name] = SERVICE_PORTS[name]
+        else:
             problems.append(
-                f"{name} must not publish ports; the host's nginx connects to the fixed addresses"
+                f"{name} may publish only {allowed} (the host's nginx connects to it there or to the fixed address)"
+                if allowed
+                else f"{name} must not publish ports"
             )
 
     networks = compose.get("networks") or {}
@@ -140,6 +157,8 @@ def check_host_proxy(cfg: Path, compose: dict, services: dict, confs: list[Path]
         address = service_address(services.get(name) or {})
         if address:
             targets[f"http://{address}:{port}"] = name
+    for name, port in loopback.items():
+        targets[f"http://127.0.0.1:{port}"] = name
     guard = None
     pf_address = service_address(services.get("privacyfence") or {})
     if pf_address:
@@ -154,7 +173,7 @@ def check_host_proxy(cfg: Path, compose: dict, services: dict, confs: list[Path]
             for match in PROXY_PASS_RE.finditer(line):
                 if match.group(1) not in targets:
                     problems.append(
-                        f"proxy_pass {match.group(1)} in {rel}:{number} is not a service's fixed address"
+                        f"proxy_pass {match.group(1)} in {rel}:{number} is not a service's fixed or published address"
                     )
     if not guarded:
         problems.append("nginx config must limit /api/provisioning/ to privacyfence")

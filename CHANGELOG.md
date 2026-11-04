@@ -2,17 +2,14 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- `deploy/nginx-host-migration/migrate.sh copy` no longer stops halfway with "not empty; refusing to overwrite" after the old services are stopped. Creating the stack let Docker put the images' default folders into the new volumes; the volumes are now checked before the stack is created and cleared right before each copy.
-- `copy` switches Peek's own Google org sign-up off in the copied database. Peek refuses to start with it next to sign-up through PrivacyFence (`auth_oidc_signup cannot be used with auth_google_org_signup`); `preflight` reports it beforehand. The old Peek's database is not changed.
-- `migrate.sh nginx` uses a `pf_oauth` rate-limit zone that another nginx file already defines, instead of defining it again (`limit_req_zone "pf_oauth" is already bound`).
-
 ### Added
 
-- `migrate.sh nginx-files` lists the nginx files that serve the three names (and `OLD_EXTRA_HOSTNAMES`) from `nginx -T`, so symlinks in `sites-enabled` are found; `preflight` shows the list.
-- `copy` renames the Compose files the old Peek and Grist containers were started from to `….migrated`, so they cannot be started beside the stack; `rollback` renames them back.
-- The README covers Compose v2 on Ubuntu, a Grist without a team site (create one and move the documents), a `GRIST_ADMIN_EMAIL` nobody signs in with, and a full clean-up with an archive first.
+- The `nginx-host` configuration: PrivacyFence, Peek and Grist behind an nginx that already runs on the host, with each app published on `127.0.0.1` (PrivacyFence 8765, Peek 7700, Grist 8484, the provisioner 8485), so the host's nginx proxies to `127.0.0.1` as it would to apps installed on the host. PrivacyFence signs people in with whatever `privacyfence.env` names: your own OIDC provider (Microsoft Entra ID included), your own Google app, or the built-in Google sign-in. `nginx/render.sh` prints the site from `.env`: it adds a redirect server for each name in `PEEK_REDIRECT_HOSTNAMES`, and uses a `pf_oauth` rate-limit zone that another nginx file already defines instead of defining it again. `install.sh nginx-host` installs it and `--upgrade` updates it like the other configurations.
+- `check_configs.py` accepts a host-nginx configuration whose services publish only their own port on `127.0.0.1`, with nginx proxying to exactly those ports, and checks `nginx/*.conf.template` files too.
+
+### Removed
+
+- `deploy/`: the Hetzner + Cloudflare bootstrap and the migration kit (`deploy/nginx-host-migration`, including the unreleased fixes from privacyfence/privacyfence-suite#15). Both fitted particular servers. They were never part of the release archives, so no installed folder loses a file.
 
 ## [0.1.3] - 2026-11-01
 

@@ -19,7 +19,7 @@ curl -fsSL https://github.com/privacyfence/privacyfence-suite/releases/latest/do
 cd <dir> && docker compose pull && docker compose up -d
 ```
 
-Files that a release dropped stay in place; the release notes name them. Read the release notes for changed image tags and new `.env` variables. For `nginx-google`, if the notes say `nginx/privacyfence-suite.conf` changed, render it again as in `nginx/README.md` and reload nginx.
+Files that a release dropped stay in place; the release notes name them. Read the release notes for changed image tags and new `.env` variables. For `nginx-google`, if the notes say `nginx/privacyfence-suite.conf` changed, render it again as in `nginx/README.md` and reload nginx; for `nginx-host`, the same for `nginx/privacyfence-suite.conf.template` (`sh nginx/render.sh`). A folder made before its configuration was released has no `VERSION` file; write one (`echo 0.0.0 > VERSION`) so `--upgrade` accepts it, and keep its Compose project name with `COMPOSE_PROJECT_NAME` in `.env` (the folder's volumes are named after it).
 
 PrivacyFence floats on `latest`, so updating only PrivacyFence needs no suite upgrade: `docker compose pull privacyfence && docker compose up -d`.
 
@@ -86,7 +86,7 @@ The provisioning keys reach the command through the `*_FILE` variables already i
 - **`localhost`: PrivacyFence restarted.** Peek, Grist and the provisioner share PrivacyFence's network namespace and lose it when PrivacyFence's container restarts. Run `docker compose up -d` to recreate them.
 - **`localhost`: no setup code.** `docker compose logs privacyfence | grep "Setup code"`. Five wrong codes use a code up; restart PrivacyFence (and then `docker compose up -d`) for a new one.
 - **Compose refuses to start with "set X in .env".** A required variable is empty; see [configurations](configurations.md).
-- **`nginx-google`: the apps cannot reach the public names.** The containers resolve the three names to `172.30.87.1` and call the host's nginx there. Causes:
+- **`nginx-google` and `nginx-host`: the apps cannot reach the public names.** The containers resolve the three names to `172.30.87.1` and call the host's nginx there. Causes:
   - the firewall blocks the `pf-suite` interface from TCP 443 (see `nginx/README.md`);
   - nginx listens only on a public address, not on all addresses (`listen 443 ssl;`, not `listen <ip>:443`), so it does not answer on `172.30.87.1`;
   - nginx is not running or `nginx -t` failed on the site file.

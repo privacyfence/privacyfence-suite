@@ -217,7 +217,59 @@ def test_check_14(tmp_path, capsys):
     tree = make_tree(tmp_path, "hostproxy")
     edit_compose(tree, lambda d: d["services"]["peek"].update(ports=["7700:7700"]))
     assert_fails(
-        tree, capsys, "a: peek must not publish ports; the host's nginx connects to the fixed addresses"
+        tree,
+        capsys,
+        "a: peek may publish only 127.0.0.1:7700:7700 (the host's nginx connects to it there or to the fixed address)",
+    )
+
+
+def test_check_14_loopback_ok(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"]["peek"].update(ports=["127.0.0.1:7700:7700"]))
+    replace_in(tree / "configs/a/nginx/a.conf", "http://172.30.87.11:7700", "http://127.0.0.1:7700")
+    assert check_configs.main(tree) == 0
+    assert capsys.readouterr().out == "ok: 1 configurations\n"
+
+
+def test_check_14_loopback_wrong_port(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"]["peek"].update(ports=["127.0.0.1:7701:7700"]))
+    assert_fails(
+        tree,
+        capsys,
+        "a: peek may publish only 127.0.0.1:7700:7700 (the host's nginx connects to it there or to the fixed address)",
+    )
+
+
+def test_check_14_init_never_publishes(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    edit_compose(tree, lambda d: d["services"]["init"].update(ports=["127.0.0.1:9999:9999"]))
+    assert_fails(
+        tree,
+        capsys,
+        "a: init must not publish ports",
+    )
+
+
+def test_check_17_loopback_target_needs_the_port(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    replace_in(tree / "configs/a/nginx/a.conf", "http://172.30.87.11:7700", "http://127.0.0.1:7700")
+    assert_fails(
+        tree,
+        capsys,
+        "a: proxy_pass http://127.0.0.1:7700 in nginx/a.conf:16 is not a service's fixed or published address",
+    )
+
+
+def test_template_files_are_checked(tmp_path, capsys):
+    tree = make_tree(tmp_path, "hostproxy")
+    conf = tree / "configs/a/nginx/a.conf"
+    conf.rename(conf.with_name("a.conf.template"))
+    replace_in(tree / "configs/a/nginx/a.conf.template", "http://172.30.87.11:7700", "http://172.30.87.99:7700")
+    assert_fails(
+        tree,
+        capsys,
+        "a: proxy_pass http://172.30.87.99:7700 in nginx/a.conf.template:16 is not a service's fixed or published address",
     )
 
 
@@ -257,7 +309,7 @@ def test_check_17_target(tmp_path, capsys):
     tree = make_tree(tmp_path, "hostproxy")
     replace_in(tree / "configs/a/nginx/a.conf", "http://172.30.87.11:7700", "http://172.30.87.99:7700")
     assert_fails(
-        tree, capsys, "a: proxy_pass http://172.30.87.99:7700 in nginx/a.conf:16 is not a service's fixed address"
+        tree, capsys, "a: proxy_pass http://172.30.87.99:7700 in nginx/a.conf:16 is not a service's fixed or published address"
     )
 
 
