@@ -104,6 +104,30 @@ The host's nginx as in `nginx-google`, with three differences: every app is also
 | Peek admin | none |
 | Team site | `team`; provisioner domain `privacyfence.localhost` |
 
+## Peek page backends
+
+Optional, in every configuration, off by default. A [page backend](https://github.com/privacyfence/peek/blob/main/docs/operations.md#page-backends) is a Docker image that Peek runs as a container next to a page version; the page calls it with `peek.fetch`. Each configuration ships `compose.backends.yaml`, which Compose reads only when `.env` names it:
+
+```sh
+COMPOSE_FILE=compose.yaml:compose.backends.yaml
+DOCKER_GID=999        # stat -c %g /var/run/docker.sock
+```
+
+Then `docker compose up -d`. If peekd cannot reach the engine it stops with `docker is not reachable at ...`, which almost always means `DOCKER_GID` is wrong. On Peek's **Admin** page, **Backends** tab, set the allowed backend images (a short registry prefix such as `ghcr.io/acme/`, or exact repositories); while it is empty no page can have a backend. The same tab sets memory, CPU, idle stop, the cap on running backends and registry credentials.
+
+| Variable | Meaning | Ends up in |
+|---|---|---|
+| `COMPOSE_FILE` | `compose.yaml:compose.backends.yaml` turns page backends on; unset (the default) leaves them off | Compose itself |
+| `DOCKER_GID` | Group id of the Docker socket on the host, so Peek (uid 65532) can use it. Required when backends are on. Usually `0` on Docker Desktop | `group_add` of `peek` |
+
+What `compose.backends.yaml` changes:
+
+- `peek` gets `PEEK_BACKENDS=docker`, `PEEK_DOCKER_HOST=unix:///var/run/docker.sock`, `PEEK_BACKEND_NETWORK=peek-backends`, the socket mounted and the socket's group. Its hardening (`read_only`, `cap_drop: ALL`, `no-new-privileges`) stays.
+- A bridge network named `peek-backends`, where peekd starts the backend containers. In the proxy configurations `peek` joins it and keeps its `pf` address; backends are not on `pf`, so they cannot reach PrivacyFence, Grist or the provisioner on their internal addresses. They have outbound internet and reach PrivacyFence through its public host name.
+- `localhost`: `peek` shares `privacyfence`'s network namespace, so the network is attached to `privacyfence`, and backends can reach the address where PrivacyFence, Peek and Grist listen. Because only a Peek admin can allow images, the file also makes `admin@privacyfence.localhost` the Peek admin; Peek does not provision an admin, so that person connects Peek once by hand on `/connect` with a Peek API token.
+
+**The Docker socket is root on the host.** Anyone who controls Peek, or can make it start an image you allowed, controls the server. Keep the allowed images short, and prefer a dedicated VM, rootless Docker or a socket proxy (point `PEEK_DOCKER_HOST` at it and drop the socket mount in a `compose.override.yaml`). Backend data volumes (`peek-<instance>-data-u<id>`) live in the engine, outside `peek-data`; see [Backup](operations.md#backup). Turning backends off again: remove `COMPOSE_FILE` from `.env` and run `docker compose up -d`; peekd removes its backend containers when it stops, and the volumes stay.
+
 ## Generated values
 
 `init` runs on every `docker compose up -d`. The first time it generates each value (`<prefix>` plus 43 base64url characters from `/dev/urandom`; it logs `init: generated <name>` and never the value). The root-only canonical copy is `/out/pf/.<name>` in the `pf-secrets` volume; on every run `init` installs a copy into each consumer's volume, mode `0400`.

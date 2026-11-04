@@ -47,6 +47,8 @@ jobs:
                 sed -i "s|^${key}=.*|${pair}|" .env
               done
               docker compose config -q
+              echo "== $dir with page backends"
+              DOCKER_GID=999 COMPOSE_FILE=compose.yaml:compose.backends.yaml docker compose config -q
             )
           done
 

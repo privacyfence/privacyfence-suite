@@ -317,3 +317,70 @@ def test_check_17_guard(tmp_path, capsys):
     tree = make_tree(tmp_path, "hostproxy")
     replace_in(tree / "configs/a/nginx/a.conf", "$remote_addr != 172.30.87.10", "$remote_addr != 172.30.87.50")
     assert_fails(tree, capsys, "a: nginx config must limit /api/provisioning/ to privacyfence")
+
+
+def edit_backends(tree: Path, edit, config: str = "a") -> None:
+    path = tree / "configs" / config / "compose.backends.yaml"
+    data = yaml.safe_load(path.read_text())
+    edit(data)
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def test_backends_file_missing(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    (tree / "configs/a/compose.backends.yaml").unlink()
+    assert_fails(tree, capsys, "a: missing compose.backends.yaml")
+
+
+def test_backends_socket_not_in_compose(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_compose(tree, lambda d: d["services"]["peek"]["volumes"].append("/var/run/docker.sock:/var/run/docker.sock"))
+    assert_fails(
+        tree,
+        capsys,
+        "a: compose.yaml must not mount the Docker socket (peek); page backends are opt-in in compose.backends.yaml",
+    )
+
+
+def test_backends_socket_only_on_peek(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_backends(tree, lambda d: d["services"].update(grist={"volumes": ["/var/run/docker.sock:/var/run/docker.sock"]}))
+    assert_fails(tree, capsys, "a: compose.backends.yaml: only peek may mount the Docker socket, not grist")
+
+
+def test_backends_new_service(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_backends(tree, lambda d: d["services"].update(helper={"image": "alpine"}))
+    assert_fails(tree, capsys, "a: compose.backends.yaml adds service helper; it may only extend services of compose.yaml")
+
+
+def test_backends_peek_settings(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_backends(tree, lambda d: d["services"]["peek"]["environment"].update(PEEK_BACKENDS="off"))
+    assert_fails(
+        tree,
+        capsys,
+        "a: compose.backends.yaml: peek must set PEEK_BACKENDS=docker and PEEK_BACKEND_NETWORK=peek-backends",
+    )
+
+
+def test_backends_peek_socket(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_backends(tree, lambda d: d["services"]["peek"].pop("volumes"))
+    assert_fails(tree, capsys, "a: compose.backends.yaml: peek must mount /var/run/docker.sock")
+
+
+def test_backends_network(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    edit_backends(tree, lambda d: d["networks"]["peek-backends"].update(internal=True))
+    assert_fails(
+        tree,
+        capsys,
+        "a: compose.backends.yaml: the peek-backends network must be named peek-backends and not internal",
+    )
+
+
+def test_backends_variable_in_env_example(tmp_path, capsys):
+    tree = make_tree(tmp_path)
+    replace_in(tree / "configs/a/.env.example", "DOCKER_GID=\n", "")
+    assert_fails(tree, capsys, "a: DOCKER_GID is used by compose.backends.yaml but not in .env.example")

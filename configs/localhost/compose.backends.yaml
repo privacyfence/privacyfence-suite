@@ -1,0 +1,32 @@
+# Optional: Peek page backends. Off unless .env names this file in COMPOSE_FILE:
+#   COMPOSE_FILE=compose.yaml:compose.backends.yaml
+#   DOCKER_GID=<output of: stat -c %g /var/run/docker.sock; usually 0 on Docker Desktop>
+# It mounts the Docker socket into Peek, which is root on this host: keep the allowed images on
+# Peek's Admin page (Backends tab) short. See docs/configurations.md#peek-page-backends.
+services:
+  privacyfence:
+    # Peek shares this container's network (network_mode: service:privacyfence), so the backend
+    # network is attached here. Backends can then reach this address, where PrivacyFence, Peek
+    # and Grist listen.
+    networks:
+      default: {}
+      peek-backends: {}
+
+  peek:
+    environment:
+      # Only a Peek admin can allow backend images (Admin page, Backends tab), and localhost has
+      # none otherwise. Peek does not provision an admin's account, so with backends on the person
+      # connects Peek once by hand on http://localhost:8765/connect with a Peek API token.
+      PEEK_ADMIN_EMAILS: admin@privacyfence.localhost
+      PEEK_BACKENDS: docker
+      PEEK_DOCKER_HOST: unix:///var/run/docker.sock
+      PEEK_BACKEND_NETWORK: peek-backends
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID in .env (stat -c %g /var/run/docker.sock)}"
+
+networks:
+  # peekd starts backend containers on this network (it reuses it when it exists).
+  peek-backends:
+    name: peek-backends
